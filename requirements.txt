@@ -1,0 +1,6 @@
+python-telegram-bot
+requests
+aiohttp
+matplotlib
+pandas
+urllib3
