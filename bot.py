@@ -1,3 +1,4 @@
+import os
 import matplotlib
 matplotlib.use("Agg")
 
@@ -5,7 +6,7 @@ from telegram.ext import ApplicationBuilder
 from agsi import agsi_handlerlari_ekle
 from tahmin import tahmin_handlerlari_ekle
 
-BOT_TOKEN = "8602784222:AAFvX7ogcPLj35R7FZc8w1f5RnBng0mMgEg"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()

@@ -12,7 +12,8 @@ from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
 # ── Ayarlar ───────────────────────────────────────────────────────────────────
-AGSI_API_KEY = "ef724f8062e242ba1cf92e81d97fa73e"
+import os
+AGSI_API_KEY = os.environ.get("AGSI_API_KEY")
 
 ULKE_KODLARI = {
     "avrupa"    : "eu", "almanya"   : "de", "fransa"    : "fr",
