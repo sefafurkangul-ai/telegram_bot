@@ -1,5 +1,7 @@
 import io
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -13,7 +15,7 @@ from telegram.ext import CommandHandler, ContextTypes
 # ── Şehir → koordinat ────────────────────────────────────────────────────────
 def sehir_koordinat(sehir: str):
     url = f"https://geocoding-api.open-meteo.com/v1/search?name={sehir}&count=1&language=tr"
-    r   = requests.get(url, timeout=10)
+    r   = requests.get(url, timeout=10, verify=False)
     res = r.json().get("results", [])
     if not res:
         return None, None, None
@@ -33,7 +35,7 @@ def ensemble_cek(lat, lon, model, degisken):
         f"&forecast_days=10"
         f"&timezone=auto"
     )
-    r    = requests.get(url, timeout=15)
+    r    = requests.get(url, timeout=15, verify=False)
     data = r.json()
 
     if "hourly" not in data:
@@ -147,11 +149,13 @@ async def tahmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Sıcaklık grafiği ──────────────────────────────────────────────────────
     fig1, ax1 = grafik_olustur()
+    dfs_sicaklik = {}
 
     for isim, (model, renk) in modeller.items():
         df = ensemble_cek(lat, lon, model, "temperature_2m")
         if df is None:
             continue
+        dfs_sicaklik[isim] = df
 
         ax1.fill_between(df["tarih"], df["min"], df["max"],
                          color=renk, alpha=0.10)
@@ -171,6 +175,27 @@ async def tahmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                labelcolor="white", fontsize=9)
     plt.tight_layout()
     buf1 = grafik_kaydet(fig1)
+
+    # ── Günlük sıcaklık tablosu ───────────────────────────────────────────────
+    tablo_metni = None
+    if dfs_sicaklik:
+        gunler = sorted({d.date() for df in dfs_sicaklik.values()
+                         for d in df["tarih"].dt.to_pydatetime()})
+        satirlar = [f"{'Tarih':<9}{'ECMWF':^11}{'GFS':^11}",
+                    f"{'':9}{'Min':>4} {'Max':>4}  {'Min':>4} {'Max':>4}",
+                    "─" * 32]
+        for gun in gunler:
+            satir = f"{gun.strftime('%d/%m'):<9}"
+            for isim in ["ECMWF ENS", "GFS ENS"]:
+                if isim in dfs_sicaklik:
+                    g = dfs_sicaklik[isim]
+                    g = g[g["tarih"].dt.date == gun]
+                    if not g.empty:
+                        satir += f"{g['min'].min():>4.0f} {g['max'].max():>4.0f}  "
+                    else:
+                        satir += f"{'—':>4} {'—':>4}  "
+            satirlar.append(satir)
+        tablo_metni = "```\n" + "\n".join(satirlar) + "\n```"
 
     # ── Rüzgar grafiği ────────────────────────────────────────────────────────
     fig2, ax2 = grafik_olustur()
@@ -203,6 +228,8 @@ async def tahmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo=buf1,
         caption=f"🌡 {sehir_adi} Sicaklik — ECMWF & GFS Ensemble"
     )
+    if tablo_metni:
+        await update.message.reply_text(tablo_metni, parse_mode="Markdown")
     await update.message.reply_photo(
         photo=buf2,
         caption=f"💨 {sehir_adi} Ruzgar — ECMWF & GFS Ensemble"

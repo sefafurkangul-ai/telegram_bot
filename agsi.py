@@ -1,7 +1,6 @@
 import io
 import asyncio
 import aiohttp
-import requests
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -22,43 +21,44 @@ ULKE_KODLARI = {
     "romanya"   : "ro", "macaristan": "hu", "cekya"     : "cz",
 }
 
-# ── Tek günlük senkron istek ──────────────────────────────────────────────────
-def agsi_tek_gun(ulke_kodu, tarih):
-    headers = {"x-key": AGSI_API_KEY}
+# ── Tek günlük async istek ────────────────────────────────────────────────────
+async def agsi_tek_gun_async(ulke_kodu, tarih):
     url     = f"https://agsi.gie.eu/api?country={ulke_kodu}&date={tarih}"
+    headers = {"x-key": AGSI_API_KEY}
+    connector = aiohttp.TCPConnector(ssl=False)
     try:
-        r    = requests.get(url, headers=headers, timeout=10, verify=False)
-        data = r.json().get("data", [])
-        return data[0] if data else {}
-    except:
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.get(url, headers=headers,
+                                   timeout=aiohttp.ClientTimeout(total=10)) as r:
+                data = await r.json()
+                rows = data.get("data", [])
+                return rows[0] if rows else {}
+    except Exception:
         return {}
 
-# ── Paralel async veri çekme ──────────────────────────────────────────────────
-async def _tek_gun_async(session, ulke_kodu, tarih):
-    url     = f"https://agsi.gie.eu/api?country={ulke_kodu}&date={tarih}"
-    headers = {"x-key": AGSI_API_KEY}
-    try:
-        async with session.get(url, headers=headers, ssl=False,
-                               timeout=aiohttp.ClientTimeout(total=10)) as r:
-            data = await r.json()
-            rows = data.get("data", [])
-            return rows[0] if rows else None
-    except:
-        return None
-
-async def agsi_aralik(ulke_kodu: str, gun_sayisi: int) -> pd.DataFrame:
+# ── Tarih aralığı — paralel async istekler ───────────────────────────────────
+async def agsi_aralik(ulke_kodu: str, gun_sayisi: int,
+                      max_concurrent: int = 20, step: int = 1) -> pd.DataFrame:
     bugun    = datetime.today()
     tarihler = [
         (bugun - timedelta(days=i+1)).strftime("%Y-%m-%d")
-        for i in range(gun_sayisi)
+        for i in range(0, gun_sayisi, step)
     ]
 
-    # Max 5 paralel istek — fazlası takılmaya neden oluyor
-    semaphore = asyncio.Semaphore(5)
+    semaphore = asyncio.Semaphore(max_concurrent)
 
     async def limitli(session, tarih):
+        url     = f"https://agsi.gie.eu/api?country={ulke_kodu}&date={tarih}"
+        headers = {"x-key": AGSI_API_KEY}
         async with semaphore:
-            return await _tek_gun_async(session, ulke_kodu, tarih)
+            try:
+                async with session.get(url, headers=headers, ssl=False,
+                                       timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    data = await r.json()
+                    rows = data.get("data", [])
+                    return rows[0] if rows else None
+            except Exception:
+                return None
 
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -121,9 +121,9 @@ async def gaz_depo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     bugun = datetime.today()
-    v     = agsi_tek_gun(ulke_kodu, bugun.strftime("%Y-%m-%d"))
+    v     = await agsi_tek_gun_async(ulke_kodu, bugun.strftime("%Y-%m-%d"))
     if not v:
-        v = agsi_tek_gun(ulke_kodu, (bugun - timedelta(days=1)).strftime("%Y-%m-%d"))
+        v = await agsi_tek_gun_async(ulke_kodu, (bugun - timedelta(days=1)).strftime("%Y-%m-%d"))
     if not v:
         await update.message.reply_text("Veri alinamadi.")
         return
@@ -145,15 +145,19 @@ async def gaz_depo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(mesaj)
 
-# ── /gazgrafik : Son 1 yıl ────────────────────────────────────────────────────
+# ── /gazgrafik : Y-2 Ekim'den bugüne ─────────────────────────────────────────
 async def gaz_grafik(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ulke_adi  = " ".join(context.args).lower() if context.args else "avrupa"
     ulke_kodu = ULKE_KODLARI.get(ulke_adi, "eu")
 
-    await update.message.reply_text("Grafik hazirlaniyor, 1-2 dakika surebilir...")
+    await update.message.reply_text("Grafik hazirlaniyor...")
+
+    bugun      = datetime.today()
+    baslangic  = datetime(bugun.year - 2, 10, 1)
+    gun_sayisi = (bugun - baslangic).days
 
     try:
-        df = await asyncio.wait_for(agsi_aralik(ulke_kodu, 365), timeout=120)
+        df = await asyncio.wait_for(agsi_aralik(ulke_kodu, gun_sayisi), timeout=60)
     except asyncio.TimeoutError:
         await update.message.reply_text("Zaman asimi. Lutfen tekrar deneyin.")
         return
@@ -185,11 +189,13 @@ async def gaz_grafik(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 xytext=(8, 0), textcoords="offset points")
 
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
     plt.xticks(rotation=45)
+    ax.set_xlim(df["tarih"].iloc[0], df["tarih"].iloc[-1])
     ax.set_ylim(0, 100)
-    ax.set_title(f"{ulke_adi.title()} Dogalgaz Depo Doluluk - Son 1 Yil",
-                 color="white", fontsize=13, pad=15)
+    ax.set_title(
+        f"{ulke_adi.title()} Dogalgaz Depo - Eki {bugun.year-2} / Bugun",
+        color="white", fontsize=13, pad=15)
     ax.set_ylabel("Doluluk (%)", color="#8b949e")
     ax.legend(facecolor="#21262d", edgecolor="#30363d",
               labelcolor="white", fontsize=9, loc="upper left")
@@ -198,22 +204,34 @@ async def gaz_grafik(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buf = grafik_kaydet(fig)
     await update.message.reply_photo(
         photo=buf,
-        caption=f"{ulke_adi.title()} - Son 1 Yil | Guncel: %{son_deger:.1f}"
+        caption=f"{ulke_adi.title()} | Eki {bugun.year-2} - Bugun | Guncel: %{son_deger:.1f}"
     )
 
-# ── /gazytd : Bu yıl vs geçen yıl ────────────────────────────────────────────
+# ── /gazytd : Bu yıl vs geçen yıl + 5 yıl bulutu ────────────────────────────
 async def gaz_ytd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ulke_adi  = " ".join(context.args).lower() if context.args else "avrupa"
     ulke_kodu = ULKE_KODLARI.get(ulke_adi, "eu")
 
-    await update.message.reply_text("YTD grafigi hazirlaniyor, 1-2 dakika surebilir...")
+    await update.message.reply_text("YTD grafigi hazirlaniyor...")
 
     bugun = datetime.today()
     yil   = bugun.year
 
     try:
-        # Bu yıl + geçen yıl birlikte çek (2 yıl = 730 gün)
-        df_tum = await asyncio.wait_for(agsi_aralik(ulke_kodu, 730), timeout=180)
+        # Bulut (Y-5'ten Y-2'ye, haftalık) + detaylı (Y-1 ve Y, günlük) paralel çek
+        gun_bulut  = (bugun - datetime(yil - 5, 1, 1)).days
+        gun_detay  = (bugun - datetime(yil - 1, 1, 1)).days
+        df_bulut, df_detay = await asyncio.wait_for(
+            asyncio.gather(
+                agsi_aralik(ulke_kodu, gun_bulut, max_concurrent=10, step=14),
+                agsi_aralik(ulke_kodu, gun_detay, max_concurrent=10, step=1),
+            ),
+            timeout=120
+        )
+        df_tum = (pd.concat([df_bulut, df_detay])
+                  .drop_duplicates(subset=["tarih"], keep="last")
+                  .sort_values("tarih")
+                  .reset_index(drop=True))
     except asyncio.TimeoutError:
         await update.message.reply_text("Zaman asimi. Lutfen tekrar deneyin.")
         return
@@ -222,32 +240,49 @@ async def gaz_ytd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Veri alinamadi.")
         return
 
-    renkler = {yil: "#58a6ff", yil-1: "#f78166"}
-    veriler = {}
-    for y in [yil, yil-1]:
-        df = df_tum[df_tum["yil"] == y]
-        if not df.empty:
-            veriler[y] = df
+    # Yıllara göre ayır
+    veriler = {y: df_tum[df_tum["yil"] == y]
+               for y in range(yil - 5, yil + 1)
+               if not df_tum[df_tum["yil"] == y].empty}
 
     if not veriler:
         await update.message.reply_text("Veri alinamadi.")
         return
 
     fig, ax = grafik_olustur()
-
     bugun_gun = bugun.timetuple().tm_yday
-    for y, df in sorted(veriler.items(), reverse=True):
-        renk      = renkler[y]
+
+    # ── 5 yıllık min-max bulutu (Y-5 … Y-1) ─────────────────────────────────
+    bulut_yillar = [y for y in range(yil - 5, yil) if y in veriler]
+    if bulut_yillar:
+        bulut_df = df_tum[df_tum["yil"].isin(bulut_yillar)]
+        bulut_g  = (bulut_df.groupby("gun_sirasi")["doluluk"]
+                    .agg(["min", "max"])
+                    .reindex(range(1, 366))
+                    .interpolate(method="linear")
+                    .reset_index()
+                    .rename(columns={"index": "gun_sirasi"}))
+        ax.fill_between(bulut_g["gun_sirasi"], bulut_g["min"], bulut_g["max"],
+                        color="#8b949e", alpha=0.18,
+                        label=f"{min(bulut_yillar)}-{max(bulut_yillar)} araligi")
+
+    # ── Geçen yıl ve bu yıl çizgileri ────────────────────────────────────────
+    renkler = {yil: "#58a6ff", yil - 1: "#f78166"}
+    for y in [yil - 1, yil]:
+        if y not in veriler:
+            continue
+        df       = veriler[y]
+        renk     = renkler[y]
+        son_gun  = df["gun_sirasi"].iloc[-1]
         son_deger = df["doluluk"].iloc[-1]
-        son_gun   = df["gun_sirasi"].iloc[-1]
-        kalinlik  = 2.5 if y == yil else 1.5
+        kalinlik = 2.5 if y == yil else 1.5
 
         ax.plot(df["gun_sirasi"], df["doluluk"], color=renk,
-                linewidth=kalinlik, label=f"{y} (%{son_deger:.1f})")
+                linewidth=kalinlik, label=f"{y} (%{son_deger:.1f})", zorder=3)
 
         if y == yil:
             ax.fill_between(df["gun_sirasi"], df["doluluk"],
-                            alpha=0.10, color=renk)
+                            alpha=0.10, color=renk, zorder=2)
 
         ax.scatter([son_gun], [son_deger], color=renk, s=55, zorder=5)
         ax.annotate(f" %{son_deger:.1f}", xy=(son_gun, son_deger),
@@ -267,8 +302,11 @@ async def gaz_ytd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ax.set_xticklabels(ay_isimleri, color="#8b949e")
     ax.set_xlim(1, 365)
     ax.set_ylim(0, 100)
-    ax.set_title(f"{ulke_adi.title()} Dogalgaz - YTD Karsilastirmasi ({yil-1} vs {yil})",
-                 color="white", fontsize=13, pad=15)
+    bulut_etiket = (f"{min(bulut_yillar)}-{max(bulut_yillar)}"
+                    if bulut_yillar else "")
+    baslik = (f"{ulke_adi.title()} Dogalgaz - YTD ({yil-1} vs {yil}"
+              + (f" | {bulut_etiket} bulutu)" if bulut_etiket else ")"))
+    ax.set_title(baslik, color="white", fontsize=13, pad=15)
     ax.set_ylabel("Doluluk (%)", color="#8b949e")
     ax.legend(facecolor="#21262d", edgecolor="#30363d",
               labelcolor="white", fontsize=9, loc="upper left")
@@ -276,21 +314,23 @@ async def gaz_ytd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     buf = grafik_kaydet(fig)
 
-    fark_metni = ""
-    bugun_deger = veriler[yil]["doluluk"].iloc[-1]
+    # Caption
+    bugun_deger     = veriler[yil]["doluluk"].iloc[-1] if yil in veriler else None
     gecen_yil_deger = None
+    fark_metni      = ""
 
-    if (yil-1) in veriler:
-        df_gecen = veriler[yil-1]
+    if (yil - 1) in veriler:
+        df_gecen   = veriler[yil - 1]
         gecen_ayni = df_gecen[df_gecen["gun_sirasi"] == bugun_gun]
         if not gecen_ayni.empty:
             gecen_yil_deger = gecen_ayni["doluluk"].iloc[0]
-            fark = bugun_deger - gecen_yil_deger
-            isaret = "+" if fark > 0 else ""
-            fark_metni = f"\nGecen yila fark: {isaret}{fark:.1f} puan"
+            if bugun_deger is not None:
+                fark    = bugun_deger - gecen_yil_deger
+                isaret  = "+" if fark > 0 else ""
+                fark_metni = f"\nGecen yila fark: {isaret}{fark:.1f} puan"
 
     caption = (
-        f"{yil}: %{bugun_deger:.1f}\n"
+        (f"{yil}: %{bugun_deger:.1f}\n" if bugun_deger else "")
         + (f"{yil-1}: %{gecen_yil_deger:.1f}" if gecen_yil_deger else "")
         + fark_metni
     )
