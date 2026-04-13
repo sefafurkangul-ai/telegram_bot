@@ -53,6 +53,8 @@ def ensemble_cek(lat, lon, model, degisken):
             df = pd.DataFrame({"tarih": tarihler, "medyan": hourly[degisken]})
             df["min"] = df["medyan"]
             df["max"] = df["medyan"]
+            df["p25"] = df["medyan"]
+            df["p75"] = df["medyan"]
             return df.dropna()
         return None
 
@@ -88,43 +90,6 @@ def grafik_kaydet(fig) -> io.BytesIO:
     buf.seek(0)
     plt.close()
     return buf
-
-# ── Tek değişken için grafik çiz ─────────────────────────────────────────────
-def degisken_grafik(sehir_adi, degisken, birim, baslik):
-    modeller = {
-        "ECMWF ENS": ("ecmwf_ifs025", "#58a6ff"),
-        "GFS ENS"  : ("gfs_seamless",  "#f78166"),
-    }
-
-    fig, ax = grafik_olustur()
-    veri_geldi = False
-
-    for isim, (model, renk) in modeller.items():
-        df = ensemble_cek(None, None, model, degisken)  # lat/lon dışarıdan verilecek
-        if df is None:
-            continue
-        veri_geldi = True
-
-        # Min-max bandı (çok şeffaf)
-        ax.fill_between(df["tarih"], df["min"], df["max"],
-                        color=renk, alpha=0.10)
-        # %25-%75 bandı (biraz daha belirgin)
-        ax.fill_between(df["tarih"], df["p25"], df["p75"],
-                        color=renk, alpha=0.25, label=f"{isim} (%25–75)")
-        # Medyan çizgisi
-        ax.plot(df["tarih"], df["medyan"],
-                color=renk, linewidth=2, label=f"{isim} Medyan")
-
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
-    plt.xticks(rotation=45)
-    ax.set_title(f"{sehir_adi} — {baslik} (10 Gün ENS)",
-                 color="white", fontsize=13, pad=15)
-    ax.set_ylabel(birim, color="#8b949e")
-    ax.legend(facecolor="#21262d", edgecolor="#30363d",
-              labelcolor="white", fontsize=9)
-    plt.tight_layout()
-    return fig, veri_geldi
 
 # ── /tahmin komutu ────────────────────────────────────────────────────────────
 async def tahmin(update: Update, context: ContextTypes.DEFAULT_TYPE):

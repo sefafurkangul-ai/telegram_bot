@@ -258,7 +258,7 @@ async def gaz_ytd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bulut_df = df_tum[df_tum["yil"].isin(bulut_yillar)]
         bulut_g  = (bulut_df.groupby("gun_sirasi")["doluluk"]
                     .agg(["min", "max"])
-                    .reindex(range(1, 366))
+                    .reindex(range(1, 367))
                     .interpolate(method="linear")
                     .reset_index()
                     .rename(columns={"index": "gun_sirasi"}))
