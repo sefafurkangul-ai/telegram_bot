@@ -9,6 +9,24 @@ from telegram.ext import CommandHandler, ContextTypes
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# yfinance SSL bypass (kurumsal proxy)
+os.environ.setdefault("CURL_CA_BUNDLE", "")
+os.environ.setdefault("REQUESTS_CA_BUNDLE", "")
+
+import yfinance as yf
+
+# yfinance için SSL doğrulamasız session
+def _yf_session():
+    try:
+        from curl_cffi import requests as cr
+        return cr.Session(verify=False, impersonate="chrome110")
+    except ImportError:
+        s = requests.Session()
+        s.verify = False
+        return s
+
+_YF_SESSION = _yf_session()
+
 AGSI_API_KEY = os.environ.get("AGSI_API_KEY")
 
 DE_LAT, DE_LON = 51.17, 10.45   # Almanya merkezi
@@ -161,5 +179,92 @@ async def gaztoplu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(tablo, parse_mode="Markdown")
 
 
+# ── Piyasa tablosu ───────────────────────────────────────────────────────────
+
+_AYLAR = {1:'F',2:'G',3:'H',4:'J',5:'K',6:'M',7:'N',8:'Q',9:'U',10:'V',11:'X',12:'Z'}
+
+
+def _brent_ticker(n: int = 2) -> str:
+    """N ay sonrasının Brent futures ticker'ı (Yahoo NYMEX formatı)."""
+    dt = datetime.today()
+    m, y = dt.month + n, dt.year
+    while m > 12:
+        m -= 12
+        y += 1
+    return f"BZ{_AYLAR[m]}{str(y)[-2:]}.NYM"
+
+
+
+def _fiyat_al(ticker_str: str):
+    """Son fiyat, günlük değişim (kapanış bazlı) ve % değişim döndür."""
+    try:
+        t    = yf.Ticker(ticker_str, session=_YF_SESSION)
+        hist = t.history(period="1mo")
+        if not hist.empty:
+            fiyat  = float(hist["Close"].iloc[-1])
+            onceki = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else None
+            degisim = (fiyat - onceki) if onceki else None
+            pct     = (degisim / onceki * 100) if (onceki and degisim is not None) else None
+            return fiyat, degisim, pct
+        # history gelmezse fast_info + info dict dene
+        fi     = t.fast_info
+        fiyat  = fi.last_price
+        if not fiyat:
+            return None, None, None
+        onceki = fi.previous_close
+        if onceki is None:
+            info   = t.info
+            onceki = info.get("regularMarketPreviousClose") or info.get("previousClose")
+        degisim = (fiyat - onceki) if onceki else None
+        pct     = (degisim / onceki * 100) if (onceki and degisim is not None) else None
+        return float(fiyat), degisim, pct
+    except Exception:
+        return None, None, None
+
+
+PIYASALAR = [
+    ("Brent M+2", lambda: _brent_ticker(2)),
+    ("TTF M+1",   "TTF=F"),
+    ("API2 Kömür", "MTF=F"),
+    ("EUR/USD",   "EURUSD=X"),
+]
+
+
+async def piyasa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Veri alınıyor...")
+    loop = asyncio.get_running_loop()
+
+    def _topla():
+        return [
+            (isim, ticker() if callable(ticker) else ticker,
+             *_fiyat_al(ticker() if callable(ticker) else ticker))
+            for isim, ticker in PIYASALAR
+        ]
+
+    sonuclar = await loop.run_in_executor(None, _topla)
+
+    satirlar = []
+    for isim, tkr, f, d, p in sonuclar:
+        if f is not None:
+            d_str = (f"{'+'if d >= 0 else ''}{d:.2f}" if d is not None else "N/A")
+            p_str = (f"{'+'if p >= 0 else ''}{p:.1f}%"  if p is not None else "")
+            satirlar.append(f"{isim:<12} {f:>9.2f}  {d_str:>8} {p_str:>7}")
+        else:
+            satirlar.append(f"{isim:<12} {'N/A':>9}  (ticker: {tkr})")
+
+    tarih = datetime.today().strftime("%d.%m.%Y %H:%M")
+    ayrac = "─" * 44
+    mesaj = "\n".join([
+        f"*Piyasa — {tarih}*",
+        "```",
+        f"{'Enstrüman':<12} {'Fiyat':>9}  {'Değ.':>8} {'%Değ.':>7}",
+        ayrac,
+        *satirlar,
+        "```",
+    ])
+    await update.message.reply_text(mesaj, parse_mode="Markdown")
+
+
 def ilker_handlerlari_ekle(app):
     app.add_handler(CommandHandler("gaztoplu", gaztoplu))
+    app.add_handler(CommandHandler("piyasa",   piyasa))

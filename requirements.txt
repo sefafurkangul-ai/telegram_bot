@@ -3,3 +3,5 @@ aiohttp
 matplotlib
 pandas
 urllib3
+python-dotenv
+yfinance
