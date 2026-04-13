@@ -1,14 +1,12 @@
-import io
 import asyncio
 import aiohttp
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
+from grafik_utils import grafik_olustur, grafik_kaydet
 
 # ── Ayarlar ───────────────────────────────────────────────────────────────────
 import os
@@ -25,10 +23,9 @@ ULKE_KODLARI = {
 async def agsi_tek_gun_async(ulke_kodu, tarih):
     url     = f"https://agsi.gie.eu/api?country={ulke_kodu}&date={tarih}"
     headers = {"x-key": AGSI_API_KEY}
-    connector = aiohttp.TCPConnector(ssl=False)
     try:
-        async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.get(url, headers=headers,
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, ssl=False,
                                    timeout=aiohttp.ClientTimeout(total=10)) as r:
                 data = await r.json()
                 rows = data.get("data", [])
@@ -60,8 +57,7 @@ async def agsi_aralik(ulke_kodu: str, gun_sayisi: int,
             except Exception:
                 return None
 
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
+    async with aiohttp.ClientSession() as session:
         sonuclar = await asyncio.gather(
             *[limitli(session, t) for t in tarihler],
             return_exceptions=True
@@ -89,25 +85,6 @@ async def agsi_aralik(ulke_kodu: str, gun_sayisi: int,
     df["yil"]        = df["tarih"].dt.year
     return df.sort_values("tarih").reset_index(drop=True)
 
-# ── Grafik teması ─────────────────────────────────────────────────────────────
-def grafik_olustur(figsize=(13, 6)):
-    fig, ax = plt.subplots(figsize=figsize)
-    fig.patch.set_facecolor("#0d1117")
-    ax.set_facecolor("#161b22")
-    for spine in ax.spines.values():
-        spine.set_edgecolor("#30363d")
-    ax.tick_params(colors="#8b949e")
-    plt.xticks(color="#8b949e")
-    plt.yticks(color="#8b949e")
-    return fig, ax
-
-def grafik_kaydet(fig) -> io.BytesIO:
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=150,
-                bbox_inches="tight", facecolor=fig.get_facecolor())
-    buf.seek(0)
-    plt.close()
-    return buf
 
 # ── /gaz : Anlık durum (tek istek, hızlı) ────────────────────────────────────
 async def gaz_depo(update: Update, context: ContextTypes.DEFAULT_TYPE):

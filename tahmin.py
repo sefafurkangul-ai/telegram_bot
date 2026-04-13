@@ -1,16 +1,13 @@
-import io
+import asyncio
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
-import numpy as np
-from datetime import datetime
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
+from grafik_utils import grafik_olustur, grafik_kaydet
 
 # ── Şehir → koordinat ────────────────────────────────────────────────────────
 def sehir_koordinat(sehir: str):
@@ -41,13 +38,11 @@ def ensemble_cek(lat, lon, model, degisken):
     if "hourly" not in data:
         return None
 
-    hourly  = data["hourly"]
+    hourly   = data["hourly"]
     tarihler = pd.to_datetime(hourly["time"])
 
-    # Tüm üye kolonlarını bul (member01, member02 ...)
     uyeler = [k for k in hourly.keys() if k.startswith(degisken) and k != degisken]
 
-    # Eğer üye yoksa direkt degisken kolonunu kullan
     if not uyeler:
         if degisken in hourly:
             df = pd.DataFrame({"tarih": tarihler, "medyan": hourly[degisken]})
@@ -58,9 +53,7 @@ def ensemble_cek(lat, lon, model, degisken):
             return df.dropna()
         return None
 
-    # Üyeleri DataFrame'e al
     uye_df = pd.DataFrame({u: hourly[u] for u in uyeler}, index=tarihler)
-
     df = pd.DataFrame({
         "tarih" : tarihler,
         "medyan": uye_df.median(axis=1).values,
@@ -70,26 +63,6 @@ def ensemble_cek(lat, lon, model, degisken):
         "p75"   : uye_df.quantile(0.75, axis=1).values,
     })
     return df.dropna()
-
-# ── Grafik teması ─────────────────────────────────────────────────────────────
-def grafik_olustur(figsize=(13, 5)):
-    fig, ax = plt.subplots(figsize=figsize)
-    fig.patch.set_facecolor("#0d1117")
-    ax.set_facecolor("#161b22")
-    for spine in ax.spines.values():
-        spine.set_edgecolor("#30363d")
-    ax.tick_params(colors="#8b949e")
-    plt.xticks(color="#8b949e")
-    plt.yticks(color="#8b949e")
-    return fig, ax
-
-def grafik_kaydet(fig) -> io.BytesIO:
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=150,
-                bbox_inches="tight", facecolor=fig.get_facecolor())
-    buf.seek(0)
-    plt.close()
-    return buf
 
 # ── /tahmin komutu ────────────────────────────────────────────────────────────
 async def tahmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,27 +80,40 @@ async def tahmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"'{sehir}' bulunamadı.")
         return
 
-    modeller = {
-        "ECMWF ENS": ("ecmwf_ifs025", "#58a6ff"),
-        "GFS ENS"  : ("gfs_seamless",  "#f78166"),
-    }
+    loop = asyncio.get_running_loop()
+
+    # 4 ensemble verisini paralel çek (sıralı ~60s → paralel ~15s)
+    try:
+        (df_ecmwf_t, df_gfs_t,
+         df_ecmwf_w, df_gfs_w) = await asyncio.wait_for(
+            asyncio.gather(
+                loop.run_in_executor(None, ensemble_cek, lat, lon, "ecmwf_ifs025", "temperature_2m"),
+                loop.run_in_executor(None, ensemble_cek, lat, lon, "gfs_seamless",  "temperature_2m"),
+                loop.run_in_executor(None, ensemble_cek, lat, lon, "ecmwf_ifs025", "wind_speed_10m"),
+                loop.run_in_executor(None, ensemble_cek, lat, lon, "gfs_seamless",  "wind_speed_10m"),
+            ),
+            timeout=45
+        )
+    except asyncio.TimeoutError:
+        await update.message.reply_text("Veri alınamadı (zaman aşımı).")
+        return
+
+    sicaklik = {"ECMWF ENS": (df_ecmwf_t, "#58a6ff"), "GFS ENS": (df_gfs_t, "#f78166")}
+    ruzgar   = {"ECMWF ENS": (df_ecmwf_w, "#58a6ff"), "GFS ENS": (df_gfs_w, "#f78166")}
 
     # ── Sıcaklık grafiği ──────────────────────────────────────────────────────
-    fig1, ax1 = grafik_olustur()
+    fig1, ax1 = grafik_olustur(figsize=(13, 5))
     dfs_sicaklik = {}
 
-    for isim, (model, renk) in modeller.items():
-        df = ensemble_cek(lat, lon, model, "temperature_2m")
+    for isim, (df, renk) in sicaklik.items():
         if df is None:
             continue
         dfs_sicaklik[isim] = df
-
-        ax1.fill_between(df["tarih"], df["min"], df["max"],
-                         color=renk, alpha=0.10)
-        ax1.fill_between(df["tarih"], df["p25"], df["p75"],
-                         color=renk, alpha=0.25, label=f"{isim} (%25–75)")
-        ax1.plot(df["tarih"], df["medyan"],
-                 color=renk, linewidth=2, label=f"{isim} Medyan")
+        ax1.fill_between(df["tarih"], df["min"], df["max"], color=renk, alpha=0.10)
+        ax1.fill_between(df["tarih"], df["p25"], df["p75"], color=renk, alpha=0.25,
+                         label=f"{isim} (%25–75)")
+        ax1.plot(df["tarih"], df["medyan"], color=renk, linewidth=2,
+                 label=f"{isim} Medyan")
 
     ax1.axhline(y=0, color="#555", linestyle="--", linewidth=0.8, alpha=0.6)
     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
@@ -136,8 +122,7 @@ async def tahmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ax1.set_title(f"{sehir_adi} — Sicaklik Tahmini (10 Gun ENS)",
                   color="white", fontsize=13, pad=15)
     ax1.set_ylabel("Sicaklik (C)", color="#8b949e")
-    ax1.legend(facecolor="#21262d", edgecolor="#30363d",
-               labelcolor="white", fontsize=9)
+    ax1.legend(facecolor="#21262d", edgecolor="#30363d", labelcolor="white", fontsize=9)
     plt.tight_layout()
     buf1 = grafik_kaydet(fig1)
 
@@ -153,29 +138,23 @@ async def tahmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             satir = f"{gun.strftime('%d/%m'):<9}"
             for isim in ["ECMWF ENS", "GFS ENS"]:
                 if isim in dfs_sicaklik:
-                    g = dfs_sicaklik[isim]
-                    g = g[g["tarih"].dt.date == gun]
-                    if not g.empty:
-                        satir += f"{g['min'].min():>4.0f} {g['max'].max():>4.0f}  "
-                    else:
-                        satir += f"{'—':>4} {'—':>4}  "
+                    g = dfs_sicaklik[isim][dfs_sicaklik[isim]["tarih"].dt.date == gun]
+                    satir += (f"{g['min'].min():>4.0f} {g['max'].max():>4.0f}  "
+                              if not g.empty else f"{'—':>4} {'—':>4}  ")
             satirlar.append(satir)
         tablo_metni = "```\n" + "\n".join(satirlar) + "\n```"
 
     # ── Rüzgar grafiği ────────────────────────────────────────────────────────
-    fig2, ax2 = grafik_olustur()
+    fig2, ax2 = grafik_olustur(figsize=(13, 5))
 
-    for isim, (model, renk) in modeller.items():
-        df = ensemble_cek(lat, lon, model, "wind_speed_10m")
+    for isim, (df, renk) in ruzgar.items():
         if df is None:
             continue
-
-        ax2.fill_between(df["tarih"], df["min"], df["max"],
-                         color=renk, alpha=0.10)
-        ax2.fill_between(df["tarih"], df["p25"], df["p75"],
-                         color=renk, alpha=0.25, label=f"{isim} (%25–75)")
-        ax2.plot(df["tarih"], df["medyan"],
-                 color=renk, linewidth=2, label=f"{isim} Medyan")
+        ax2.fill_between(df["tarih"], df["min"], df["max"], color=renk, alpha=0.10)
+        ax2.fill_between(df["tarih"], df["p25"], df["p75"], color=renk, alpha=0.25,
+                         label=f"{isim} (%25–75)")
+        ax2.plot(df["tarih"], df["medyan"], color=renk, linewidth=2,
+                 label=f"{isim} Medyan")
 
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
     ax2.xaxis.set_major_locator(mdates.DayLocator(interval=2))
@@ -183,22 +162,17 @@ async def tahmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ax2.set_title(f"{sehir_adi} — Ruzgar Hizi Tahmini (10 Gun ENS)",
                   color="white", fontsize=13, pad=15)
     ax2.set_ylabel("Ruzgar (km/h)", color="#8b949e")
-    ax2.legend(facecolor="#21262d", edgecolor="#30363d",
-               labelcolor="white", fontsize=9)
+    ax2.legend(facecolor="#21262d", edgecolor="#30363d", labelcolor="white", fontsize=9)
     plt.tight_layout()
     buf2 = grafik_kaydet(fig2)
 
     # ── Telegram'a gönder ─────────────────────────────────────────────────────
     await update.message.reply_photo(
-        photo=buf1,
-        caption=f"🌡 {sehir_adi} Sicaklik — ECMWF & GFS Ensemble"
-    )
+        photo=buf1, caption=f"🌡 {sehir_adi} Sicaklik — ECMWF & GFS Ensemble")
     if tablo_metni:
         await update.message.reply_text(tablo_metni, parse_mode="Markdown")
     await update.message.reply_photo(
-        photo=buf2,
-        caption=f"💨 {sehir_adi} Ruzgar — ECMWF & GFS Ensemble"
-    )
+        photo=buf2, caption=f"💨 {sehir_adi} Ruzgar — ECMWF & GFS Ensemble")
 
 # ── Handler kayıt ─────────────────────────────────────────────────────────────
 def tahmin_handlerlari_ekle(app):

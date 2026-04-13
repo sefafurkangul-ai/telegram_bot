@@ -9,9 +9,10 @@ from telegram.ext import CommandHandler, ContextTypes
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# yfinance SSL bypass (kurumsal proxy)
-os.environ.setdefault("CURL_CA_BUNDLE", "")
-os.environ.setdefault("REQUESTS_CA_BUNDLE", "")
+# yfinance SSL bypass — sadece kurumsal proxy ortamında (.env'de LOCAL_PROXY=1)
+if os.environ.get("LOCAL_PROXY"):
+    os.environ.setdefault("CURL_CA_BUNDLE", "")
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", "")
 
 import yfinance as yf
 
@@ -199,7 +200,7 @@ def _fiyat_al(ticker_str: str):
     """Son fiyat, günlük değişim (kapanış bazlı) ve % değişim döndür."""
     try:
         t    = yf.Ticker(ticker_str, session=_YF_SESSION)
-        hist = t.history(period="1mo")
+        hist = t.history(period="5d")
         if not hist.empty:
             fiyat  = float(hist["Close"].iloc[-1])
             onceki = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else None
@@ -236,11 +237,11 @@ async def piyasa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loop = asyncio.get_running_loop()
 
     def _topla():
-        return [
-            (isim, ticker() if callable(ticker) else ticker,
-             *_fiyat_al(ticker() if callable(ticker) else ticker))
-            for isim, ticker in PIYASALAR
-        ]
+        sonuclar = []
+        for isim, ticker in PIYASALAR:
+            tkr = ticker() if callable(ticker) else ticker
+            sonuclar.append((isim, tkr, *_fiyat_al(tkr)))
+        return sonuclar
 
     sonuclar = await loop.run_in_executor(None, _topla)
 
