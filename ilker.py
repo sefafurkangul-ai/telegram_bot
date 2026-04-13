@@ -222,6 +222,7 @@ def _fiyat_al(ticker_str: str):
         return None, None, None
 
 
+
 PIYASALAR = [
     ("Brent M+2", lambda: _brent_ticker(2)),
     ("TTF M+1",   "TTF=F"),
