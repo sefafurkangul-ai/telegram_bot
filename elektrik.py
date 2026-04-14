@@ -1,7 +1,7 @@
 import asyncio
 import requests
 import urllib3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
@@ -18,6 +18,7 @@ PIYASALAR = [
     ("GR",       "GR      "),
     ("BG",       "BG      "),
     ("RO",       "RO      "),
+    ("ES",       "ES      "),
 ]
 
 EC_URL = "https://api.energy-charts.info/price"
@@ -56,7 +57,6 @@ async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tarih = datetime.today().strftime("%Y-%m-%d")
 
-    # Tüm piyasaları paralel çek
     gorevler = [
         loop.run_in_executor(None, _da_fiyat, bzn, tarih)
         for bzn, _ in PIYASALAR
@@ -69,7 +69,7 @@ async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ayrac,
     ]
 
-    for (bzn, etiket), fiyat in zip(PIYASALAR, sonuclar):
+    for (_, etiket), fiyat in zip(PIYASALAR, sonuclar):
         if fiyat:
             base_str = f"{fiyat['base']:>7.1f}"
             peak_str = f"{fiyat['peak']:>7.1f}" if fiyat["peak"] else "    N/A"
