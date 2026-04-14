@@ -31,8 +31,9 @@ PIYASALAR = [
 ]
 
 EC_URL    = "https://api.energy-charts.info/price"
-_EPIAS_USER = os.environ.get("EPIAS_USERNAME")
-_EPIAS_PASS = os.environ.get("EPIAS_PASSWORD")
+_EPIAS_USER   = os.environ.get("EPIAS_USERNAME")
+_EPIAS_PASS   = os.environ.get("EPIAS_PASSWORD")
+_EPIAS_SSL    = not bool(os.environ.get("LOCAL_PROXY"))
 
 
 def _epias_ptf(tarih: str):
@@ -40,7 +41,7 @@ def _epias_ptf(tarih: str):
     if not _EPTR2 or not _EPIAS_USER or not _EPIAS_PASS:
         return None
     try:
-        eptr = _EPTR2(username=_EPIAS_USER, password=_EPIAS_PASS)
+        eptr = _EPTR2(username=_EPIAS_USER, password=_EPIAS_PASS, ssl_verify=_EPIAS_SSL)
         df   = eptr.call("ptf", start_date=tarih, end_date=tarih)
         if df is None or df.empty:
             return None
