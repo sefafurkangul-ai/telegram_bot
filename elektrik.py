@@ -1,9 +1,12 @@
 import asyncio
 import requests
 import urllib3
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
+
+CET = ZoneInfo("Europe/Berlin")
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -55,7 +58,10 @@ async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Fiyatlar aliniyor...")
     loop = asyncio.get_running_loop()
 
-    tarih = datetime.today().strftime("%Y-%m-%d")
+    simdi = datetime.now(CET)
+    kesim = simdi.replace(hour=13, minute=30, second=0, microsecond=0)
+    offset = timedelta(days=1) if simdi >= kesim else timedelta(days=0)
+    tarih = (simdi + offset).strftime("%Y-%m-%d")
 
     gorevler = [
         loop.run_in_executor(None, _da_fiyat, bzn, tarih)
