@@ -7,7 +7,6 @@ from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
 CET = ZoneInfo("Europe/Berlin")
-TRT = ZoneInfo("Europe/Istanbul")
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -25,8 +24,7 @@ PIYASALAR = [
     ("ES",       "ES      "),
 ]
 
-EC_URL    = "https://api.energy-charts.info/price"
-EPIAS_URL = "https://seffaflik.epias.com.tr/electricity-service/v1/markets/dam/data/mcp"
+EC_URL = "https://api.energy-charts.info/price"
 
 
 def _da_fiyat(bzn: str, tarih: str):
@@ -56,46 +54,6 @@ def _da_fiyat(bzn: str, tarih: str):
         return None
 
 
-def _epias_ptf(tarih: str):
-    """EPİAŞ'tan gün öncesi piyasa takas fiyatı (TRY/MWh)."""
-    try:
-        body = {
-            "startDate": f"{tarih}T00:00:00+03:00",
-            "endDate":   f"{tarih}T23:00:00+03:00",
-        }
-        r = requests.post(EPIAS_URL, json=body, verify=False, timeout=10,
-                          headers={"Content-Type": "application/json",
-                                   "Accept": "application/json"})
-        items = r.json().get("items", [])
-        if not items:
-            return None
-
-        prices = []
-        peak_prices = []
-        for x in items:
-            p = x.get("marketTradePrice") or x.get("price")
-            if p is None:
-                continue
-            p = float(p)
-            prices.append(p)
-            # Peak: 08:00–20:00 TRT (saat +03:00 olarak gelir)
-            try:
-                hour = int(str(x.get("date", ""))[11:13])
-                if 8 <= hour < 20:
-                    peak_prices.append(p)
-            except Exception:
-                pass
-
-        if not prices:
-            return None
-
-        base = round(sum(prices) / len(prices), 1)
-        peak = round(sum(peak_prices) / len(peak_prices), 1) if peak_prices else None
-        return {"base": base, "peak": peak}
-    except Exception:
-        return None
-
-
 async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Fiyatlar aliniyor...")
     loop = asyncio.get_running_loop()
@@ -109,11 +67,7 @@ async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
         loop.run_in_executor(None, _da_fiyat, bzn, tarih)
         for bzn, _ in PIYASALAR
     ]
-    gorevler.append(loop.run_in_executor(None, _epias_ptf, tarih))
     sonuclar = await asyncio.gather(*gorevler)
-
-    tr_fiyat   = sonuclar[-1]
-    eu_sonuclar = sonuclar[:-1]
 
     ayrac = "─" * 30
     satirlar = [
@@ -121,7 +75,7 @@ async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ayrac,
     ]
 
-    for (_, etiket), fiyat in zip(PIYASALAR, eu_sonuclar):
+    for (_, etiket), fiyat in zip(PIYASALAR, sonuclar):
         if fiyat:
             base_str = f"{fiyat['base']:>7.1f}"
             peak_str = f"{fiyat['peak']:>7.1f}" if fiyat["peak"] else "    N/A"
@@ -130,19 +84,8 @@ async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
             peak_str = "    N/A"
         satirlar.append(f"{etiket:<10} {base_str} {peak_str}")
 
-    # TR satırı — TRY/MWh
-    satirlar.append(ayrac)
-    if tr_fiyat:
-        base_str = f"{tr_fiyat['base']:>7.1f}"
-        peak_str = f"{tr_fiyat['peak']:>7.1f}" if tr_fiyat["peak"] else "    N/A"
-    else:
-        base_str = "    N/A"
-        peak_str = "    N/A"
-    satirlar.append(f"{'TR(TRY)':<10} {base_str} {peak_str}")
-
     mesaj = "\n".join([
-        f"*Gun Oncesi Elektrik — {tarih}*",
-        f"_(EUR/MWh, TR: TRY/MWh)_",
+        f"*Gun Oncesi Elektrik — {tarih} (EUR/MWh)*",
         "```",
         *satirlar,
         "```",
