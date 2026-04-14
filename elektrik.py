@@ -1,3 +1,4 @@
+import os
 import asyncio
 import requests
 import urllib3
@@ -5,6 +6,11 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
+
+try:
+    from eptr2 import EPTR2 as _EPTR2
+except ImportError:
+    _EPTR2 = None
 
 CET = ZoneInfo("Europe/Berlin")
 
@@ -25,20 +31,18 @@ PIYASALAR = [
 ]
 
 EC_URL    = "https://api.energy-charts.info/price"
-EPIAS_URL = "https://seffaflik.epias.com.tr/electricity-service/v1/markets/dam/data/mcp"
+_EPIAS_USER = os.environ.get("EPIAS_USERNAME")
+_EPIAS_PASS = os.environ.get("EPIAS_PASSWORD")
 
 
 def _epias_ptf(tarih: str):
     """EPİAŞ'tan gün öncesi piyasa takas fiyatı (TRY/MWh)."""
+    if not _EPTR2 or not _EPIAS_USER or not _EPIAS_PASS:
+        return None
     try:
-        body = {
-            "startDate": f"{tarih}T00:00:00+03:00",
-            "endDate":   f"{tarih}T23:00:00+03:00",
-        }
-        r = requests.post(EPIAS_URL, json=body, verify=False, timeout=15,
-                          headers={"Content-Type": "application/json",
-                                   "Accept": "application/json"})
-        items = r.json().get("items", [])
+        eptr  = _EPTR2(username=_EPIAS_USER, password=_EPIAS_PASS)
+        res   = eptr.call("ptf", start_date=tarih, end_date=tarih)
+        items = res.get("items", [])
         if not items:
             return None
 

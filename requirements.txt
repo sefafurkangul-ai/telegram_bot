@@ -5,3 +5,4 @@ pandas
 urllib3
 python-dotenv
 yfinance
+eptr2
