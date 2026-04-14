@@ -104,14 +104,14 @@ def _istatistik(veriler: dict, bugun_str: str):
 def _satir(isim: str, veriler: dict, bugun_str: str, ondalik: int = 0) -> str:
     guncel, delta, avg = _istatistik(veriler, bugun_str)
     if guncel is None:
-        return f"{isim:<20} {'N/A':>7} {'N/A':>7} {'N/A':>7}"
+        return f"{isim:<12} {'N/A':>6} {'N/A':>6} {'N/A':>6}"
 
     def f(v):
         return format(round(v, ondalik), f",.{ondalik}f") if v is not None else "N/A"
 
     isaret    = "+" if delta is not None and delta > 0 else ""
     delta_str = f"{isaret}{f(delta)}" if delta is not None else "N/A"
-    return f"{isim:<20} {f(guncel):>7} {delta_str:>7} {f(avg):>7}"
+    return f"{isim:<12} {f(guncel):>6} {delta_str:>6} {f(avg):>6}"
 
 
 # ── Handler ───────────────────────────────────────────────────────────────────
@@ -162,18 +162,18 @@ async def gaztoplu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
 
     # Tablo
-    ayrac = "─" * 44
+    ayrac = "─" * 33
     tablo = "\n".join([
         "```",
-        f"{'Gösterge':<20} {'Güncel':>7} {'D-7G':>7} {'7G Ort':>7}",
+        f"{'Gösterge':<12} {'Güncel':>6} {'D-7G':>6} {'Ort':>6}",
         ayrac,
-        _satir("Gas Stocks (TWh)", stocks,  bugun, ondalik=0),
-        _satir("Doluluk (%)",      doluluk, bugun, ondalik=1),
-        _satir("Net Inj. (GWh/d)", net_inj, bugun, ondalik=0),
-        _satir("LNG (GWh/d)",      lng,     bugun, ondalik=0),
+        _satir("Stok (TWh)",  stocks,  bugun, ondalik=0),
+        _satir("Doluluk (%)", doluluk, bugun, ondalik=1),
+        _satir("NetInj(GWh)", net_inj, bugun, ondalik=0),
+        _satir("LNG (GWh)",   lng,     bugun, ondalik=0),
         ayrac,
-        _satir("Almanya (C)",      de_temp, bugun, ondalik=1),
-        _satir("Fransa  (C)",      fr_temp, bugun, ondalik=1),
+        _satir("Almanya (C)", de_temp, bugun, ondalik=1),
+        _satir("Fransa  (C)", fr_temp, bugun, ondalik=1),
         "```",
     ])
 
