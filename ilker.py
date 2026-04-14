@@ -228,10 +228,10 @@ def _fiyat_al(ticker_str: str):
 
 
 PIYASALAR = [
-    ("Brent M+2", lambda: _brent_ticker(2)),
-    ("TTF M+1",   "TTF=F"),
-    ("API2 Kömür", "MTF=F"),
-    ("EUR/USD",   "EURUSD=X"),
+    ("Brent M+2",  lambda: _brent_ticker(2)),
+    ("TTF M+1",    "TTF=F"),
+    ("HenryHub M1","NG=F"),
+    ("EUR/USD",    "EURUSD=X"),
 ]
 
 
