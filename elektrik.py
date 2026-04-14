@@ -99,15 +99,27 @@ async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     simdi = datetime.now(CET)
     kesim = simdi.replace(hour=13, minute=30, second=0, microsecond=0)
-    offset = timedelta(days=1) if simdi >= kesim else timedelta(days=0)
-    tarih = (simdi + offset).strftime("%Y-%m-%d")
+    yarin = (simdi + timedelta(days=1)).strftime("%Y-%m-%d")
+    bugun = simdi.strftime("%Y-%m-%d")
 
-    gorevler = [
-        loop.run_in_executor(None, _da_fiyat, bzn, tarih)
-        for bzn, _ in PIYASALAR
-    ]
-    gorevler.append(loop.run_in_executor(None, _epias_ptf, tarih))
-    sonuclar = await asyncio.gather(*gorevler)
+    async def _cek(tarih: str):
+        gorevler = [
+            loop.run_in_executor(None, _da_fiyat, bzn, tarih)
+            for bzn, _ in PIYASALAR
+        ]
+        gorevler.append(loop.run_in_executor(None, _epias_ptf, tarih))
+        return await asyncio.gather(*gorevler)
+
+    if simdi >= kesim:
+        sonuclar = await _cek(yarin)
+        tarih = yarin
+        # D+1 veri yoksa bugüne düş
+        if not any(s for s in sonuclar[:-1]):
+            sonuclar = await _cek(bugun)
+            tarih = bugun
+    else:
+        sonuclar = await _cek(bugun)
+        tarih = bugun
 
     tr_fiyat    = sonuclar[-1]
     eu_sonuclar = sonuclar[:-1]
