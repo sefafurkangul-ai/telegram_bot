@@ -202,12 +202,14 @@ def _fiyat_al(ticker_str: str):
         t    = yf.Ticker(ticker_str, session=_YF_SESSION)
         hist = t.history(period="5d")
         if not hist.empty:
-            fiyat      = float(hist["Close"].iloc[-1])
-            veri_tarihi = hist.index[-1].strftime("%d.%m")
-            onceki     = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else None
-            degisim    = (fiyat - onceki) if onceki else None
-            pct        = (degisim / onceki * 100) if (onceki and degisim is not None) else None
-            return fiyat, degisim, pct, veri_tarihi
+            fiyat  = float(hist["Close"].iloc[-1])
+            onceki = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else None
+            degisim     = (fiyat - onceki) if onceki else None
+            pct         = (degisim / onceki * 100) if (onceki and degisim is not None) else None
+            # Kaç gündür aynı fiyat?
+            esit_gun = sum(1 for c in hist["Close"] if round(c, 4) == round(fiyat, 4))
+            stale_not = f"={esit_gun}g" if esit_gun >= 2 else None
+            return fiyat, degisim, pct, stale_not
         # history gelmezse fast_info + info dict dene
         fi     = t.fast_info
         fiyat  = fi.last_price
