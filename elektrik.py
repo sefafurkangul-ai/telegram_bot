@@ -40,31 +40,22 @@ def _epias_ptf(tarih: str):
     if not _EPTR2 or not _EPIAS_USER or not _EPIAS_PASS:
         return None
     try:
-        eptr  = _EPTR2(username=_EPIAS_USER, password=_EPIAS_PASS)
-        res   = eptr.call("ptf", start_date=tarih, end_date=tarih)
-        items = res.get("items", [])
-        if not items:
+        eptr = _EPTR2(username=_EPIAS_USER, password=_EPIAS_PASS)
+        df   = eptr.call("ptf", start_date=tarih, end_date=tarih)
+        if df is None or df.empty:
             return None
 
-        prices, peak_prices = [], []
-        for x in items:
-            p = x.get("marketTradePrice") or x.get("price")
-            if p is None:
-                continue
-            p = float(p)
-            prices.append(p)
-            try:
-                hour = int(str(x.get("date", ""))[11:13])
-                if 8 <= hour < 20:
-                    peak_prices.append(p)
-            except Exception:
-                pass
-
+        prices = df["price"].dropna().tolist()
         if not prices:
             return None
 
         base = round(sum(prices) / len(prices), 1)
+
+        # Peak: 08:00–20:00 TRT
+        peak_df     = df[df["hour"].apply(lambda h: 8 <= int(h.split(":")[0]) < 20)]
+        peak_prices = peak_df["price"].dropna().tolist()
         peak = round(sum(peak_prices) / len(peak_prices), 1) if peak_prices else None
+
         return {"base": base, "peak": peak}
     except Exception:
         return None
