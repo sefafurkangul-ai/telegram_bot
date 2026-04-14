@@ -197,30 +197,31 @@ def _brent_ticker(n: int = 2) -> str:
 
 
 def _fiyat_al(ticker_str: str):
-    """Son fiyat, günlük değişim (kapanış bazlı) ve % değişim döndür."""
+    """Son fiyat, günlük değişim, % değişim ve veri tarihi döndür."""
     try:
         t    = yf.Ticker(ticker_str, session=_YF_SESSION)
         hist = t.history(period="5d")
         if not hist.empty:
-            fiyat  = float(hist["Close"].iloc[-1])
-            onceki = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else None
-            degisim = (fiyat - onceki) if onceki else None
-            pct     = (degisim / onceki * 100) if (onceki and degisim is not None) else None
-            return fiyat, degisim, pct
+            fiyat      = float(hist["Close"].iloc[-1])
+            veri_tarihi = hist.index[-1].strftime("%d.%m")
+            onceki     = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else None
+            degisim    = (fiyat - onceki) if onceki else None
+            pct        = (degisim / onceki * 100) if (onceki and degisim is not None) else None
+            return fiyat, degisim, pct, veri_tarihi
         # history gelmezse fast_info + info dict dene
         fi     = t.fast_info
         fiyat  = fi.last_price
         if not fiyat:
-            return None, None, None
+            return None, None, None, None
         onceki = fi.previous_close
         if onceki is None:
             info   = t.info
             onceki = info.get("regularMarketPreviousClose") or info.get("previousClose")
         degisim = (fiyat - onceki) if onceki else None
         pct     = (degisim / onceki * 100) if (onceki and degisim is not None) else None
-        return float(fiyat), degisim, pct
+        return float(fiyat), degisim, pct, None
     except Exception:
-        return None, None, None
+        return None, None, None, None
 
 
 
@@ -245,12 +246,14 @@ async def piyasa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sonuclar = await loop.run_in_executor(None, _topla)
 
+    bugun = datetime.today().strftime("%d.%m")
     satirlar = []
-    for isim, tkr, f, d, p in sonuclar:
+    for isim, tkr, f, d, p, vt in sonuclar:
         if f is not None:
             d_str = (f"{'+'if d >= 0 else ''}{d:.2f}" if d is not None else "N/A")
             p_str = (f"{'+'if p >= 0 else ''}{p:.1f}%"  if p is not None else "")
-            satirlar.append(f"{isim:<12} {f:>9.2f}  {d_str:>8} {p_str:>7}")
+            stale = f" ({vt})" if vt and vt != bugun else ""
+            satirlar.append(f"{isim:<12} {f:>9.2f}  {d_str:>8} {p_str:>7}{stale}")
         else:
             satirlar.append(f"{isim:<12} {'N/A':>9}  (ticker: {tkr})")
 
