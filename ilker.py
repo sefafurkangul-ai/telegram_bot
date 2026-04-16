@@ -355,24 +355,45 @@ async def ilker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return "   N/A"
         return f"{v1 - v2:>+6.1f}"
 
-    n_saat = max(
-        (max(bg_h, default=-1), max(ro_h, default=-1), max(gr_h, default=-1)),
-        default=-1
-    ) + 1
-    if n_saat == 0:
+    saatler = sorted(set(bg_h) | set(ro_h) | set(gr_h))
+    if not saatler:
         await update.message.reply_text("Veri bulunamadı.")
         return
 
+    def ort(d):
+        vals = [v for v in d.values() if v is not None]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    def ort_fark(d1, d2):
+        vals = [d1[h] - d2[h] for h in saatler if h in d1 and h in d2]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    def po(v):
+        return f"{v:>5.1f}" if v is not None else "  N/A"
+
+    def fo(v):
+        return f"{v:>+6.1f}" if v is not None else "   N/A"
+
     ayrac = "─" * 22
-    fiyat_satirlar = [f"{'Sa':>2}  {'BG':>5} {'RO':>5} {'GR':>5}", ayrac]
-    for h in range(n_saat):
-        fiyat_satirlar.append(f"{h:02d}  {p(bg_h,h)} {p(ro_h,h)} {p(gr_h,h)}")
+    fiyat_satirlar = [
+        f"{'Sa':>2}  {'BG':>5} {'RO':>5} {'GR':>5}",
+        ayrac,
+        f"{'Ort':>2}  {po(ort(bg_h))} {po(ort(ro_h))} {po(ort(gr_h))}",
+        ayrac,
+    ]
+    for h in saatler:
+        fiyat_satirlar.append(f"{h+1:02d}  {p(bg_h,h)} {p(ro_h,h)} {p(gr_h,h)}")
 
     ayrac2 = "─" * 26
-    fark_satirlar = [f"{'Sa':>2}  {'BG-RO':>6} {'BG-GR':>6} {'RO-GR':>6}", ayrac2]
-    for h in range(n_saat):
+    fark_satirlar = [
+        f"{'Sa':>2}  {'BG-RO':>6} {'BG-GR':>6} {'RO-GR':>6}",
+        ayrac2,
+        f"{'Ort':>2}  {fo(ort_fark(bg_h,ro_h))} {fo(ort_fark(bg_h,gr_h))} {fo(ort_fark(ro_h,gr_h))}",
+        ayrac2,
+    ]
+    for h in saatler:
         fark_satirlar.append(
-            f"{h:02d}  {fark(bg_h,ro_h,h)} {fark(bg_h,gr_h,h)} {fark(ro_h,gr_h,h)}"
+            f"{h+1:02d}  {fark(bg_h,ro_h,h)} {fark(bg_h,gr_h,h)} {fark(ro_h,gr_h,h)}"
         )
 
     mesaj1 = "\n".join([
