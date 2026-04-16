@@ -3,7 +3,8 @@ import asyncio
 import aiohttp
 import requests
 import urllib3
-from datetime import datetime, timedelta
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
@@ -279,27 +280,43 @@ async def piyasa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── BG/RO/GR saatlik fiyat ───────────────────────────────────────────────────
 
 def _saatlik_fiyat(bzn: str, tarih: str) -> dict:
-    """Energy Charts'tan saatlik fiyatlar {saat_indeks: fiyat}."""
+    """Energy Charts'tan saatlik ortalama fiyatlar {cet_saat: fiyat}.
+    15-dakikalık aralıkları CET saatine göre gruplar ve ortalar."""
     try:
         r = requests.get(f"{EC_URL}?bzn={bzn}&start={tarih}&end={tarih}",
                          verify=False, timeout=10)
         d = r.json()
         prices = d.get("price", [])
-        if not prices:
+        unix   = d.get("unix_seconds", [])
+        if not prices or not unix:
             return {}
-        return {i: p for i, p in enumerate(prices) if p is not None}
+        buckets = defaultdict(list)
+        for ts, p in zip(unix, prices):
+            if p is not None:
+                saat = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(CET).hour
+                buckets[saat].append(p)
+        return {h: round(sum(v) / len(v), 2) for h, v in buckets.items()}
     except Exception:
         return {}
 
 
 async def ilker(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Opsiyonel tarih argümanı: /ilker 15.04.2026  veya  /ilker 2026-04-15
+    tarih_fixe = None
+    if context.args:
+        arg = context.args[0]
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+            try:
+                tarih_fixe = datetime.strptime(arg, fmt).strftime("%Y-%m-%d")
+                break
+            except ValueError:
+                pass
+        if not tarih_fixe:
+            await update.message.reply_text("Tarih formatı: /ilker 15.04.2026")
+            return
+
     await update.message.reply_text("Fiyatlar alınıyor...")
     loop = asyncio.get_running_loop()
-
-    simdi = datetime.now(CET)
-    kesim = simdi.replace(hour=13, minute=30, second=0, microsecond=0)
-    yarin = (simdi + timedelta(days=1)).strftime("%Y-%m-%d")
-    bugun = simdi.strftime("%Y-%m-%d")
 
     BOLGELER = ["BG", "RO", "GR"]
 
@@ -308,15 +325,23 @@ async def ilker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for bzn in BOLGELER]
         return await asyncio.gather(*gorevler)
 
-    if simdi >= kesim:
-        sonuclar = await _cek(yarin)
-        tarih = yarin
-        if not any(s for s in sonuclar):
+    if tarih_fixe:
+        sonuclar = await _cek(tarih_fixe)
+        tarih = tarih_fixe
+    else:
+        simdi = datetime.now(CET)
+        kesim = simdi.replace(hour=13, minute=30, second=0, microsecond=0)
+        yarin = (simdi + timedelta(days=1)).strftime("%Y-%m-%d")
+        bugun = simdi.strftime("%Y-%m-%d")
+        if simdi >= kesim:
+            sonuclar = await _cek(yarin)
+            tarih = yarin
+            if not any(s for s in sonuclar):
+                sonuclar = await _cek(bugun)
+                tarih = bugun
+        else:
             sonuclar = await _cek(bugun)
             tarih = bugun
-    else:
-        sonuclar = await _cek(bugun)
-        tarih = bugun
 
     bg_h, ro_h, gr_h = sonuclar
 
