@@ -350,18 +350,20 @@ async def ilker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{h:02d}  {fark(bg_h,ro_h,h)} {fark(bg_h,gr_h,h)} {fark(ro_h,gr_h,h)}"
         )
 
-    mesaj = "\n".join([
+    mesaj1 = "\n".join([
         f"*BG / RO / GR — {tarih}*",
         "```",
         *fiyat_satirlar,
         "```",
-        "",
+    ])
+    mesaj2 = "\n".join([
         "*Farklar (EUR/MWh)*",
         "```",
         *fark_satirlar,
         "```",
     ])
-    await update.message.reply_text(mesaj, parse_mode="Markdown")
+    await update.message.reply_text(mesaj1, parse_mode="Markdown")
+    await update.message.reply_text(mesaj2, parse_mode="Markdown")
 
 
 def ilker_handlerlari_ekle(app):
