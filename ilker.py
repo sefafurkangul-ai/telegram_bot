@@ -4,8 +4,12 @@ import aiohttp
 import requests
 import urllib3
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
+
+CET    = ZoneInfo("Europe/Berlin")
+EC_URL = "https://api.energy-charts.info/price"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -272,6 +276,95 @@ async def piyasa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(mesaj, parse_mode="Markdown")
 
 
+# ── BG/RO/GR saatlik fiyat ───────────────────────────────────────────────────
+
+def _saatlik_fiyat(bzn: str, tarih: str) -> dict:
+    """Energy Charts'tan saatlik fiyatlar {saat_indeks: fiyat}."""
+    try:
+        r = requests.get(f"{EC_URL}?bzn={bzn}&start={tarih}&end={tarih}",
+                         verify=False, timeout=10)
+        d = r.json()
+        prices = d.get("price", [])
+        if not prices:
+            return {}
+        return {i: p for i, p in enumerate(prices) if p is not None}
+    except Exception:
+        return {}
+
+
+async def ilker(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Fiyatlar alınıyor...")
+    loop = asyncio.get_running_loop()
+
+    simdi = datetime.now(CET)
+    kesim = simdi.replace(hour=13, minute=30, second=0, microsecond=0)
+    yarin = (simdi + timedelta(days=1)).strftime("%Y-%m-%d")
+    bugun = simdi.strftime("%Y-%m-%d")
+
+    BOLGELER = ["BG", "RO", "GR"]
+
+    async def _cek(tarih):
+        gorevler = [loop.run_in_executor(None, _saatlik_fiyat, bzn, tarih)
+                    for bzn in BOLGELER]
+        return await asyncio.gather(*gorevler)
+
+    if simdi >= kesim:
+        sonuclar = await _cek(yarin)
+        tarih = yarin
+        if not any(s for s in sonuclar):
+            sonuclar = await _cek(bugun)
+            tarih = bugun
+    else:
+        sonuclar = await _cek(bugun)
+        tarih = bugun
+
+    bg_h, ro_h, gr_h = sonuclar
+
+    def p(d, h):
+        v = d.get(h)
+        return f"{v:>5.1f}" if v is not None else "  N/A"
+
+    def fark(d1, d2, h):
+        v1, v2 = d1.get(h), d2.get(h)
+        if v1 is None or v2 is None:
+            return "   N/A"
+        return f"{v1 - v2:>+6.1f}"
+
+    n_saat = max(
+        (max(bg_h, default=-1), max(ro_h, default=-1), max(gr_h, default=-1)),
+        default=-1
+    ) + 1
+    if n_saat == 0:
+        await update.message.reply_text("Veri bulunamadı.")
+        return
+
+    ayrac = "─" * 22
+    fiyat_satirlar = [f"{'Sa':>2}  {'BG':>5} {'RO':>5} {'GR':>5}", ayrac]
+    for h in range(n_saat):
+        fiyat_satirlar.append(f"{h:02d}  {p(bg_h,h)} {p(ro_h,h)} {p(gr_h,h)}")
+
+    ayrac2 = "─" * 26
+    fark_satirlar = [f"{'Sa':>2}  {'BG-RO':>6} {'BG-GR':>6} {'RO-GR':>6}", ayrac2]
+    for h in range(n_saat):
+        fark_satirlar.append(
+            f"{h:02d}  {fark(bg_h,ro_h,h)} {fark(bg_h,gr_h,h)} {fark(ro_h,gr_h,h)}"
+        )
+
+    mesaj = "\n".join([
+        f"*BG / RO / GR — {tarih}*",
+        "```",
+        *fiyat_satirlar,
+        "```",
+        "",
+        "*Farklar (EUR/MWh)*",
+        "```",
+        *fark_satirlar,
+        "```",
+    ])
+    await update.message.reply_text(mesaj, parse_mode="Markdown")
+
+
 def ilker_handlerlari_ekle(app):
     app.add_handler(CommandHandler("gaztoplu", gaztoplu))
     app.add_handler(CommandHandler("piyasa",   piyasa))
+    app.add_handler(CommandHandler("ilker",    ilker))
