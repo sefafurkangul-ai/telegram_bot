@@ -300,33 +300,44 @@ def _saatlik_fiyat(bzn: str, tarih: str) -> dict:
         return {}
 
 
-async def ilker(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Opsiyonel tarih argümanı: /ilker 15.04.2026  veya  /ilker 2026-04-15
+async def eufiyatfark(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Kullanım: /eufiyatfark BG RO [15.04.2026]
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Kullanım: /eufiyatfark <ülke1> <ülke2> [tarih]\n"
+            "Örnek: /eufiyatfark BG RO\n"
+            "Örnek: /eufiyatfark BG RO 15.04.2026"
+        )
+        return
+
+    ulke1 = args[0].upper()
+    ulke2 = args[1].upper()
+
     tarih_fixe = None
-    if context.args:
-        arg = context.args[0]
+    if len(args) >= 3:
         for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
             try:
-                tarih_fixe = datetime.strptime(arg, fmt).strftime("%Y-%m-%d")
+                tarih_fixe = datetime.strptime(args[2], fmt).strftime("%Y-%m-%d")
                 break
             except ValueError:
                 pass
         if not tarih_fixe:
-            await update.message.reply_text("Tarih formatı: /ilker 15.04.2026")
+            await update.message.reply_text("Tarih formatı hatalı. Örnek: 15.04.2026 veya 2026-04-15")
             return
 
     await update.message.reply_text("Fiyatlar alınıyor...")
     loop = asyncio.get_running_loop()
 
-    BOLGELER = ["BG", "RO", "GR"]
-
     async def _cek(tarih):
-        gorevler = [loop.run_in_executor(None, _saatlik_fiyat, bzn, tarih)
-                    for bzn in BOLGELER]
-        return await asyncio.gather(*gorevler)
+        r1, r2 = await asyncio.gather(
+            loop.run_in_executor(None, _saatlik_fiyat, ulke1, tarih),
+            loop.run_in_executor(None, _saatlik_fiyat, ulke2, tarih),
+        )
+        return r1, r2
 
     if tarih_fixe:
-        sonuclar = await _cek(tarih_fixe)
+        h1, h2 = await _cek(tarih_fixe)
         tarih = tarih_fixe
     else:
         simdi = datetime.now(CET)
@@ -334,85 +345,64 @@ async def ilker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         yarin = (simdi + timedelta(days=1)).strftime("%Y-%m-%d")
         bugun = simdi.strftime("%Y-%m-%d")
         if simdi >= kesim:
-            sonuclar = await _cek(yarin)
+            h1, h2 = await _cek(yarin)
             tarih = yarin
-            if not any(s for s in sonuclar):
-                sonuclar = await _cek(bugun)
+            if not h1 and not h2:
+                h1, h2 = await _cek(bugun)
                 tarih = bugun
         else:
-            sonuclar = await _cek(bugun)
+            h1, h2 = await _cek(bugun)
             tarih = bugun
 
-    bg_h, ro_h, gr_h = sonuclar
-
-    def p(d, h):
-        v = d.get(h)
-        return f"{v:>5.1f}" if v is not None else "  N/A"
-
-    def fark(d1, d2, h):
-        v1, v2 = d1.get(h), d2.get(h)
-        if v1 is None or v2 is None:
-            return "   N/A"
-        return f"{v1 - v2:>+6.1f}"
-
-    saatler = sorted(set(bg_h) | set(ro_h) | set(gr_h))
+    saatler = sorted(set(h1) | set(h2))
     if not saatler:
         await update.message.reply_text("Veri bulunamadı.")
         return
+
+    def p(d, h):
+        v = d.get(h)
+        return f"{v:>6.1f}" if v is not None else "   N/A"
+
+    def fark(h):
+        v1, v2 = h1.get(h), h2.get(h)
+        if v1 is None or v2 is None:
+            return "   N/A"
+        return f"{v1 - v2:>+7.1f}"
 
     def ort(d):
         vals = [v for v in d.values() if v is not None]
         return round(sum(vals) / len(vals), 1) if vals else None
 
-    def ort_fark(d1, d2):
-        vals = [d1[h] - d2[h] for h in saatler if h in d1 and h in d2]
+    def ort_fark():
+        vals = [h1[h] - h2[h] for h in saatler if h in h1 and h in h2]
         return round(sum(vals) / len(vals), 1) if vals else None
 
-    def po(v):
-        return f"{v:>5.1f}" if v is not None else "  N/A"
+    fark_baslik = f"{ulke1}-{ulke2}"
+    ayrac = "─" * (24 + len(fark_baslik))
 
-    def fo(v):
-        return f"{v:>+6.1f}" if v is not None else "   N/A"
-
-    ayrac = "─" * 22
-    fiyat_satirlar = [
-        f"{'Sa':>2}  {'BG':>5} {'RO':>5} {'GR':>5}",
+    o1, o2, of = ort(h1), ort(h2), ort_fark()
+    satirlar = [
+        f"{'Sa':>2}  {ulke1:>6} {ulke2:>6} {fark_baslik:>7}",
         ayrac,
-        f"{'Ort':>2}  {po(ort(bg_h))} {po(ort(ro_h))} {po(ort(gr_h))}",
+        f"{'Ort':>2}  "
+        f"{f'{o1:>6.1f}' if o1 is not None else '   N/A'}  "
+        f"{f'{o2:>6.1f}' if o2 is not None else '   N/A'}  "
+        f"{f'{of:>+7.1f}' if of is not None else '   N/A'}",
         ayrac,
     ]
     for h in saatler:
-        fiyat_satirlar.append(f"{h+1:02d}  {p(bg_h,h)} {p(ro_h,h)} {p(gr_h,h)}")
+        satirlar.append(f"{h+1:02d}  {p(h1,h)} {p(h2,h)} {fark(h)}")
 
-    ayrac2 = "─" * 26
-    fark_satirlar = [
-        f"{'Sa':>2}  {'BG-RO':>6} {'BG-GR':>6} {'RO-GR':>6}",
-        ayrac2,
-        f"{'Ort':>2}  {fo(ort_fark(bg_h,ro_h))} {fo(ort_fark(bg_h,gr_h))} {fo(ort_fark(ro_h,gr_h))}",
-        ayrac2,
-    ]
-    for h in saatler:
-        fark_satirlar.append(
-            f"{h+1:02d}  {fark(bg_h,ro_h,h)} {fark(bg_h,gr_h,h)} {fark(ro_h,gr_h,h)}"
-        )
-
-    mesaj1 = "\n".join([
-        f"*BG / RO / GR — {tarih}*",
+    mesaj = "\n".join([
+        f"*{ulke1} / {ulke2} — {tarih}*",
         "```",
-        *fiyat_satirlar,
+        *satirlar,
         "```",
     ])
-    mesaj2 = "\n".join([
-        "*Farklar (EUR/MWh)*",
-        "```",
-        *fark_satirlar,
-        "```",
-    ])
-    await update.message.reply_text(mesaj1, parse_mode="Markdown")
-    await update.message.reply_text(mesaj2, parse_mode="Markdown")
+    await update.message.reply_text(mesaj, parse_mode="Markdown")
 
 
 def ilker_handlerlari_ekle(app):
-    app.add_handler(CommandHandler("gaztoplu", gaztoplu))
-    app.add_handler(CommandHandler("piyasa",   piyasa))
-    app.add_handler(CommandHandler("ilker",    ilker))
+    app.add_handler(CommandHandler("gaztoplu",    gaztoplu))
+    app.add_handler(CommandHandler("piyasa",      piyasa))
+    app.add_handler(CommandHandler("eufiyatfark", eufiyatfark))
