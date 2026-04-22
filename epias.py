@@ -27,6 +27,40 @@ def _gun_ort(df, col):
     return df.groupby("_d")[col].mean().to_dict()
 
 
+def _ay_ort(df, col):
+    """Belirli kolun aylık ortalaması → {'YYYY-MM': float}."""
+    if df is None or df.empty or col not in df.columns:
+        return {}
+    df = df.copy()
+    df["_m"] = df["date"].astype(str).str[:7]
+    return df.groupby("_m")[col].mean().to_dict()
+
+
+def _veri_cek_yillik(baslangic, bitis):
+    """Son 12 ay için PTF + rüzgar + güneş aylık ortalamaları."""
+    e = _eptr()
+
+    try:
+        pdf = e.call("ptf", start_date=baslangic, end_date=bitis)
+        ptf_ay = _ay_ort(pdf, "price")
+    except Exception:
+        ptf_ay = {}
+
+    try:
+        wdf = e.call("wind-forecast", start_date=baslangic, end_date=bitis)
+        wind_ay = _ay_ort(wdf, "generation")
+    except Exception:
+        wind_ay = {}
+
+    try:
+        rdf = e.call("ren-rt-gen", start_date=baslangic, end_date=bitis)
+        solar_ay = _ay_ort(rdf, "gunes")
+    except Exception:
+        solar_ay = {}
+
+    return ptf_ay, wind_ay, solar_ay
+
+
 def _veri_cek(dm1, d0, d1, mtd):
     e = _eptr()
 
@@ -172,5 +206,51 @@ async def epias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(mesaj, parse_mode="Markdown")
 
 
+async def epias_yillik(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _EPTR2 or not _EPIAS_USER or not _EPIAS_PASS:
+        await update.message.reply_text("EPİAŞ kimlik bilgisi eksik.")
+        return
+
+    await update.message.reply_text("Son 12 ay verisi alınıyor...")
+    loop = asyncio.get_running_loop()
+
+    today = datetime.today()
+    # Son 12 tamamlanmış ay: bu ayın başından 12 ay geriye
+    bitis_dt  = today.replace(day=1) - timedelta(days=1)          # geçen ayın son günü
+    baslangic_dt = (bitis_dt.replace(day=1) - timedelta(days=335)).replace(day=1)  # ~11 ay önce
+    baslangic = baslangic_dt.strftime("%Y-%m-%d")
+    bitis     = bitis_dt.strftime("%Y-%m-%d")
+
+    ptf_ay, wind_ay, solar_ay = await loop.run_in_executor(
+        None, _veri_cek_yillik, baslangic, bitis
+    )
+
+    # Tüm mevcut ayları sırala
+    aylar = sorted(set(list(ptf_ay.keys()) + list(wind_ay.keys()) + list(solar_ay.keys())))
+    aylar = aylar[-12:]  # en fazla 12 ay
+
+    def fmt_try(d, k):
+        v = d.get(k)
+        return f"{v:>8,.0f}" if v is not None else "     N/A"
+
+    def fmt_mw(d, k):
+        v = d.get(k)
+        return f"{int(round(v)):>6,}" if v is not None else "   N/A"
+
+    satirlar = ["```",
+                f"{'Ay':<8} {'PTF TRY':>8} {'Ruz MW':>6} {'Gun MW':>6}",
+                "─" * 32]
+    for ay in aylar:
+        etiket = ay[2:]  # 'YY-MM' formatı
+        satirlar.append(
+            f"{etiket:<8} {fmt_try(ptf_ay, ay)} {fmt_mw(wind_ay, ay)} {fmt_mw(solar_ay, ay)}"
+        )
+    satirlar.append("```")
+
+    mesaj = f"*EPİAŞ — Son 12 Ay Aylık Ortalamaları*\n\n" + "\n".join(satirlar)
+    await update.message.reply_text(mesaj, parse_mode="Markdown")
+
+
 def epias_handlerlari_ekle(app):
     app.add_handler(CommandHandler("epias", epias))
+    app.add_handler(CommandHandler("yillik", epias_yillik))

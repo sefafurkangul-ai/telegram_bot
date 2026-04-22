@@ -93,11 +93,6 @@ async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Fiyatlar aliniyor...")
     loop = asyncio.get_running_loop()
 
-    simdi = datetime.now(CET)
-    kesim = simdi.replace(hour=13, minute=30, second=0, microsecond=0)
-    yarin = (simdi + timedelta(days=1)).strftime("%Y-%m-%d")
-    bugun = simdi.strftime("%Y-%m-%d")
-
     async def _cek(tarih: str):
         gorevler = [
             loop.run_in_executor(None, _da_fiyat, bzn, tarih)
@@ -106,16 +101,39 @@ async def dayahead(update: Update, context: ContextTypes.DEFAULT_TYPE):
         gorevler.append(loop.run_in_executor(None, _epias_ptf, tarih))
         return await asyncio.gather(*gorevler)
 
-    if simdi >= kesim:
-        sonuclar = await _cek(yarin)
-        tarih = yarin
-        # D+1 veri yoksa bugüne düş
-        if not any(s for s in sonuclar[:-1]):
+    # ── Tarih argümanı var mı? ────────────────────────────────────────────────
+    if context.args:
+        arg = context.args[0].strip()
+        # DD.MM.YYYY veya YYYY-MM-DD formatlarını kabul et
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+            try:
+                tarih = datetime.strptime(arg, fmt).strftime("%Y-%m-%d")
+                break
+            except ValueError:
+                continue
+        else:
+            await update.message.reply_text(
+                "Geçersiz tarih formatı. Örnek: /dayahead 15.01.2025 veya /dayahead 2025-01-15"
+            )
+            return
+        sonuclar = await _cek(tarih)
+    else:
+        # ── Mevcut mantık: 13:30 CET kesim saatine göre bugün/yarın ──────────
+        simdi = datetime.now(CET)
+        kesim = simdi.replace(hour=13, minute=30, second=0, microsecond=0)
+        yarin = (simdi + timedelta(days=1)).strftime("%Y-%m-%d")
+        bugun = simdi.strftime("%Y-%m-%d")
+
+        if simdi >= kesim:
+            sonuclar = await _cek(yarin)
+            tarih = yarin
+            # D+1 veri yoksa bugüne düş
+            if not any(s for s in sonuclar[:-1]):
+                sonuclar = await _cek(bugun)
+                tarih = bugun
+        else:
             sonuclar = await _cek(bugun)
             tarih = bugun
-    else:
-        sonuclar = await _cek(bugun)
-        tarih = bugun
 
     tr_fiyat    = sonuclar[-1]
     eu_sonuclar = sonuclar[:-1]
