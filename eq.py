@@ -147,6 +147,7 @@ RL_FORECAST_CURVE = {
 
 def _rl_veri_cek(kod):
     from energyquantified import EnergyQuantified
+    from datetime import time as dtime
     eq = EnergyQuantified(api_key=EQ_API_KEY)
 
     simdi  = datetime.now(timezone.utc)
@@ -165,6 +166,7 @@ def _rl_veri_cek(kod):
     ec = eq.instances.latest(
         curve=forecast_curve,
         tags="ec-ens", ensembles=True,
+        issued_time_of_day=dtime(0, 0),
     ).to_pandas_dataframe()
     ec.columns = [c[2] if c[2] else "mean" for c in ec.columns]
     ec = ec.resample("h").mean()
@@ -172,6 +174,7 @@ def _rl_veri_cek(kod):
     gfs = eq.instances.latest(
         curve=forecast_curve,
         tags="gfs-ens", ensembles=True,
+        issued_time_of_day=dtime(0, 0),
     ).to_pandas_dataframe()
     gfs.columns = [c[2] if c[2] else "mean" for c in gfs.columns]
     gfs = gfs.resample("h").mean()
@@ -247,15 +250,15 @@ def _rl_grafik_gunluk(kod, actual, ec, gfs, begin, end, simdi):
     xlim     = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
     now_line = pd.Timestamp(simdi)
 
-    # Geçmiş: bar chart
-    gecmis = actual_d[actual_d.index <= now_line]
-    gelecek_ec  = ec_d[[c for c in ec_d.columns if c.startswith("e")]].median(axis=1)
-    gelecek_gfs = gfs_d[[c for c in gfs_d.columns if c.startswith("e")]].median(axis=1)
+    # Yalnızca tamamlanmış günler (bugün hariç)
+    bugun_ts = pd.Timestamp(simdi.date(), tz="UTC")
+    gecmis   = actual_d[actual_d.index < bugun_ts]
+    ec_med   = ec_d[[c for c in ec_d.columns if c.startswith("e")]].median(axis=1)
+    gfs_med  = gfs_d[[c for c in gfs_d.columns if c.startswith("e")]].median(axis=1)
 
     ax.bar(gecmis.index, gecmis.values, width=0.8, color="#4a4a6a", alpha=0.8, label="Actual (daily avg)")
-    ax.plot(gecmis.index, gecmis.values, color="#f0c040", linewidth=1.5)
-    ax.plot(gelecek_ec.index,  gelecek_ec.values,  color="#00bfff", linewidth=1.8, label="EC median")
-    ax.plot(gelecek_gfs.index, gelecek_gfs.values, color="#c084fc", linewidth=1.8, label="GFS median")
+    ax.plot(ec_med.index,  ec_med.values,  color="#00bfff", linewidth=1.8, label="EC median")
+    ax.plot(gfs_med.index, gfs_med.values, color="#c084fc", linewidth=1.8, label="GFS median")
     ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
 
     ax.set_xlim(xlim)
