@@ -179,57 +179,52 @@ def _rl_veri_cek(kod):
     return actual, ec, gfs, begin, end, simdi
 
 
-def _rl_grafik_olustur(kod, actual, ec, gfs, begin, end, simdi):
-    fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharey=True)
-    fig.patch.set_facecolor("#1a1a2e")
+def _ax_stil(ax):
+    ax.set_facecolor("#1a1a2e")
+    ax.tick_params(colors="white")
+    ax.xaxis.label.set_color("white")
+    ax.yaxis.label.set_color("white")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#444")
+    ax.grid(True, linestyle="--", alpha=0.25, color="gray")
 
-    xlim = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
+
+def _ensemble_plot(ax, df, renk, etiket):
+    uyeler = [c for c in df.columns if c.startswith("e")]
+    ens_df = df[uyeler]
+    p10    = ens_df.quantile(0.10, axis=1)
+    p25    = ens_df.quantile(0.25, axis=1)
+    p75    = ens_df.quantile(0.75, axis=1)
+    p90    = ens_df.quantile(0.90, axis=1)
+    median = ens_df.median(axis=1)
+    ax.fill_between(p10.index, p10, p90, alpha=0.20, color=renk, linewidth=0)
+    ax.fill_between(p25.index, p25, p75, alpha=0.35, color=renk, linewidth=0)
+    ax.plot(median.index, median, color=renk, linewidth=1.5, label=etiket)
+
+
+def _rl_grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi):
+    fig, ax = plt.subplots(figsize=(14, 5))
+    fig.patch.set_facecolor("#1a1a2e")
+    _ax_stil(ax)
+
+    xlim     = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
     now_line = pd.Timestamp(simdi)
 
-    for ax, df, baslik, renk in [
-        (axes[0], ec,  f"EC ensemble – Residual load – MWh/h – {kod}", "#00bfff"),
-        (axes[1], gfs, f"GFS ensemble – Residual load – MWh/h – {kod}", "#9370db"),
-    ]:
-        ax.set_facecolor("#1a1a2e")
-        ax.tick_params(colors="white")
-        ax.xaxis.label.set_color("white")
-        ax.yaxis.label.set_color("white")
-        for spine in ax.spines.values():
-            spine.set_edgecolor("#444")
-        ax.grid(True, linestyle="--", alpha=0.25, color="gray")
+    _ensemble_plot(ax, ec,  "#00bfff", "EC ensemble")
+    _ensemble_plot(ax, gfs, "#c084fc", "GFS ensemble")
+    ax.plot(actual.index, actual, color="#f0c040", linewidth=1.5, label="Actual", zorder=5)
+    ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
 
-        # Ensemble üyeleri (e00..eNN)
-        uyeler = [c for c in df.columns if c.startswith("e")]
-        ens_df = df[uyeler]
-
-        p10 = ens_df.quantile(0.10, axis=1)
-        p25 = ens_df.quantile(0.25, axis=1)
-        p75 = ens_df.quantile(0.75, axis=1)
-        p90 = ens_df.quantile(0.90, axis=1)
-        median = ens_df.median(axis=1)
-
-        ax.fill_between(p10.index, p10, p90, alpha=0.25, color=renk, linewidth=0)
-        ax.fill_between(p25.index, p25, p75, alpha=0.40, color=renk, linewidth=0)
-        ax.plot(median.index, median, color=renk, linewidth=1.5, label="Median")
-
-        # Gerçekleşen
-        ax.plot(actual.index, actual, color="#f0c040", linewidth=1.5, label="Actual")
-
-        # Şimdiki zaman çizgisi
-        ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
-
-        ax.set_xlim(xlim)
-        ax.set_title(baslik, color="white", fontsize=9, pad=6)
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
-        ax.legend(fontsize=8, facecolor="#1a1a2e", labelcolor="white")
-
-    axes[0].set_ylabel("MWh/h", color="white")
-    fig.suptitle(
-        f"Last refreshed: {simdi.strftime('%Y-%m-%d %H:%M')} UTC",
-        color="white", fontsize=9, y=1.01,
-    )
+    ax.set_xlim(xlim)
+    ax.set_ylabel("MWh/h", color="white")
+    ax.set_title(f"Residual load – MWh/h – {kod}  |  EC & GFS ensemble",
+                 color="white", fontsize=9)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+    ax.legend(fontsize=8, facecolor="#1a1a2e", labelcolor="white")
+    fig.suptitle(f"Last refreshed: {simdi.strftime('%Y-%m-%d %H:%M')} UTC",
+                 color="white", fontsize=8, y=1.01)
     plt.tight_layout()
 
     buf = io.BytesIO()
@@ -240,28 +235,83 @@ def _rl_grafik_olustur(kod, actual, ec, gfs, begin, end, simdi):
     return buf
 
 
-async def eqrl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def _rl_grafik_gunluk(kod, actual, ec, gfs, begin, end, simdi):
+    actual_d = actual.resample("D").mean()
+    ec_d     = ec.resample("D").mean()
+    gfs_d    = gfs.resample("D").mean()
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    fig.patch.set_facecolor("#1a1a2e")
+    _ax_stil(ax)
+
+    xlim     = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
+    now_line = pd.Timestamp(simdi)
+
+    # Geçmiş: bar chart
+    gecmis = actual_d[actual_d.index <= now_line]
+    gelecek_ec  = ec_d[[c for c in ec_d.columns if c.startswith("e")]].median(axis=1)
+    gelecek_gfs = gfs_d[[c for c in gfs_d.columns if c.startswith("e")]].median(axis=1)
+
+    ax.bar(gecmis.index, gecmis.values, width=0.8, color="#4a4a6a", alpha=0.8, label="Actual (daily avg)")
+    ax.plot(gecmis.index, gecmis.values, color="#f0c040", linewidth=1.5)
+    ax.plot(gelecek_ec.index,  gelecek_ec.values,  color="#00bfff", linewidth=1.8, label="EC median")
+    ax.plot(gelecek_gfs.index, gelecek_gfs.values, color="#c084fc", linewidth=1.8, label="GFS median")
+    ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
+
+    ax.set_xlim(xlim)
+    ax.set_ylabel("MWh/h", color="white")
+    ax.set_title(f"Residual load – Daily – MWh/h – {kod}",
+                 color="white", fontsize=9)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+    ax.legend(fontsize=8, facecolor="#1a1a2e", labelcolor="white")
+    fig.suptitle(f"Last refreshed: {simdi.strftime('%Y-%m-%d %H:%M')} UTC",
+                 color="white", fontsize=8, y=1.01)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
+async def _rl_komut(update, context, saatlik: bool):
     args = context.args
     ulke = args[0].lower() if args else "de"
     kod  = ULKE_KODLARI.get(ulke)
 
     if not kod:
         await update.message.reply_text(
-            f"Bilinmeyen ülke: {ulke}\n"
+            f"Bilinmeyen ulke: {ulke}\n"
             f"Desteklenen: {', '.join(sorted(set(ULKE_KODLARI.values())))}"
         )
         return
 
-    await update.message.reply_text(f"⏳ {kod} residual load grafik hazırlanıyor...")
+    await update.message.reply_text(f"Hazırlanıyor...")
 
     try:
         actual, ec, gfs, begin, end, simdi = await asyncio.to_thread(_rl_veri_cek, kod)
-        buf = await asyncio.to_thread(_rl_grafik_olustur, kod, actual, ec, gfs, begin, end, simdi)
+        if saatlik:
+            buf = await asyncio.to_thread(_rl_grafik_saatlik, kod, actual, ec, gfs, begin, end, simdi)
+        else:
+            buf = await asyncio.to_thread(_rl_grafik_gunluk,  kod, actual, ec, gfs, begin, end, simdi)
         await update.message.reply_photo(photo=buf)
     except Exception as e:
         await update.message.reply_text(f"Hata: {e}")
 
 
+async def eqrl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _rl_komut(update, context, saatlik=False)
+
+
+async def eqrlh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _rl_komut(update, context, saatlik=True)
+
+
 def eq_handlerlari_ekle(app):
     app.add_handler(CommandHandler("eqnukleer", eqnukleer))
-    app.add_handler(CommandHandler("eqrl", eqrl))
+    app.add_handler(CommandHandler("eqrl",      eqrl))
+    app.add_handler(CommandHandler("eqrlh",     eqrlh))
