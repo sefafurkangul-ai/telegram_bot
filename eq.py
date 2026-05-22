@@ -37,6 +37,62 @@ VERSIYONLAR = {
 
 RENKLER = {"M-1": "red", "W-1": "blue", "D-1": "orange", "D": "green"}
 
+# ── Residual Load curves ──────────────────────────────────────────────────────
+
+RL_ACTUAL_CURVE = {
+    "DE": "DE Residual Load MWh/h 15min Actual",
+    "FR": "FR Residual Load MWh/h 30min Actual",
+    "BE": "BE Residual Load MWh/h 15min Actual",
+    "GB": "GB Residual Load MWh/h 30min Actual",
+    "NL": "NL Residual Load MWh/h 15min Actual",
+}
+
+RL_FORECAST_CURVE = {
+    "DE": "DE Residual Load MWh/h 15min Forecast",
+    "FR": "FR Residual Load MWh/h 15min Forecast",
+    "BE": "BE Residual Load MWh/h 15min Forecast",
+    "GB": "GB Residual Load MWh/h 15min Forecast",
+    "NL": "NL Residual Load MWh/h 15min Forecast",
+}
+
+# ── Wind Power curves ─────────────────────────────────────────────────────────
+
+WIND_ACTUAL_CURVE = {
+    "DE": "DE Wind Power MWh/h 15min Actual",
+    "FR": "FR Wind Power MWh/h 30min Actual",
+    "BE": "BE Wind Power MWh/h 15min Actual",
+    "GB": "GB Wind Power MWh/h 30min Actual",
+    "NL": "NL Wind Power MWh/h 15min Actual",
+}
+
+WIND_FORECAST_CURVE = {
+    "DE": "DE Wind Power MWh/h 15min Forecast",
+    "FR": "FR Wind Power MWh/h 15min Forecast",
+    "BE": "BE Wind Power MWh/h 15min Forecast",
+    "GB": "GB Wind Power MWh/h 15min Forecast",
+    "NL": "NL Wind Power MWh/h 15min Forecast",
+}
+
+# ── Solar Power curves ────────────────────────────────────────────────────────
+
+SOLAR_ACTUAL_CURVE = {
+    "DE": "DE Solar Power MWh/h 15min Actual",
+    "FR": "FR Solar Power MWh/h 30min Actual",
+    "BE": "BE Solar Power MWh/h 15min Actual",
+    "GB": "GB Solar Power MWh/h 30min Actual",
+    "NL": "NL Solar Power MWh/h 15min Actual",
+}
+
+SOLAR_FORECAST_CURVE = {
+    "DE": "DE Solar Power MWh/h 15min Forecast",
+    "FR": "FR Solar Power MWh/h 15min Forecast",
+    "BE": "BE Solar Power MWh/h 15min Forecast",
+    "GB": "GB Solar Power MWh/h 15min Forecast",
+    "NL": "NL Solar Power MWh/h 15min Forecast",
+}
+
+
+# ── Nuclear REMIT ─────────────────────────────────────────────────────────────
 
 def _period_to_xy(data):
     xs, ys = [], []
@@ -128,25 +184,9 @@ async def eqnukleer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Hata: {e}")
 
 
-RL_ACTUAL_CURVE = {
-    "DE": "DE Residual Load MWh/h 15min Actual",
-    "FR": "FR Residual Load MWh/h 30min Actual",
-    "BE": "BE Residual Load MWh/h 15min Actual",
-    "GB": "GB Residual Load MWh/h 30min Actual",
-    "NL": "NL Residual Load MWh/h 15min Actual",
-}
+# ── Generic data fetch & charts ───────────────────────────────────────────────
 
-RL_FORECAST_CURVE = {
-    "DE": "DE Residual Load MWh/h 15min Forecast",
-    "FR": "FR Residual Load MWh/h 15min Forecast",
-    "BE": "BE Residual Load MWh/h 15min Forecast",
-    "GB": "GB Residual Load MWh/h 15min Forecast",
-    "NL": "NL Residual Load MWh/h 15min Forecast",
-}
-
-
-
-def _rl_veri_cek(kod):
+def _veri_cek(kod, actual_dict, forecast_dict, kaynak):
     from energyquantified import EnergyQuantified
     from datetime import time as dtime
     eq = EnergyQuantified(api_key=EQ_API_KEY)
@@ -156,15 +196,15 @@ def _rl_veri_cek(kod):
     begin  = bugun - timedelta(days=10)
     end    = bugun + timedelta(days=15)
 
-    actual_curve   = RL_ACTUAL_CURVE.get(kod, f"{kod} Residual Load MWh/h 15min Actual")
-    forecast_curve = RL_FORECAST_CURVE.get(kod, f"{kod} Residual Load MWh/h 15min Forecast")
+    actual_curve   = actual_dict.get(kod, f"{kod} {kaynak} MWh/h 15min Actual")
+    forecast_curve = forecast_dict.get(kod, f"{kod} {kaynak} MWh/h 15min Forecast")
 
     actual = eq.timeseries.load(
         curve=actual_curve,
         begin=str(begin), end=str(end),
     ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
 
-    normal_curve = f"{kod} Residual Load MWh/h 15min Normal"
+    normal_curve = f"{kod} {kaynak} MWh/h 15min Normal"
     try:
         normal = eq.timeseries.load(
             curve=normal_curve,
@@ -190,6 +230,10 @@ def _rl_veri_cek(kod):
     return actual, normal, ec, gfs, begin, end, simdi
 
 
+def _rl_veri_cek(kod):
+    return _veri_cek(kod, RL_ACTUAL_CURVE, RL_FORECAST_CURVE, "Residual Load")
+
+
 def _ax_stil(ax):
     ax.set_facecolor("#1a1a2e")
     ax.tick_params(colors="white")
@@ -213,7 +257,7 @@ def _ensemble_plot(ax, df, renk, etiket):
     ax.plot(median.index, median, color=renk, linewidth=1.5, label=etiket)
 
 
-def _rl_grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi):
+def _grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi, baslik):
     fig, ax = plt.subplots(figsize=(14, 5))
     fig.patch.set_facecolor("#1a1a2e")
     _ax_stil(ax)
@@ -228,7 +272,7 @@ def _rl_grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi):
 
     ax.set_xlim(xlim)
     ax.set_ylabel("MWh/h", color="white")
-    ax.set_title(f"Residual load – MWh/h – {kod}  |  EC & GFS ensemble",
+    ax.set_title(f"{baslik} – MWh/h – {kod}  |  EC & GFS ensemble",
                  color="white", fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
     ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
@@ -246,7 +290,7 @@ def _rl_grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi):
     return buf
 
 
-def _rl_grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi):
+def _grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi, baslik):
     actual_d = actual.resample("D").mean()
     ec_d     = ec.resample("D").mean()
     gfs_d    = gfs.resample("D").mean()
@@ -258,7 +302,6 @@ def _rl_grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi):
     xlim     = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
     now_line = pd.Timestamp(simdi)
 
-    # Tamamlanmış günler (20+ saatlik veri)
     saatlik_sayim = actual.resample("D").count()
     tam_gunler    = saatlik_sayim[saatlik_sayim >= 20].index
     gecmis        = actual_d[actual_d.index.isin(tam_gunler)]
@@ -266,7 +309,6 @@ def _rl_grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi):
     ec_med  = ec_d[[c for c in ec_d.columns if c.startswith("e")]].median(axis=1)
     gfs_med = gfs_d[[c for c in gfs_d.columns if c.startswith("e")]].median(axis=1)
 
-    # Bugün için forecast barı (en yakın EC median günlük ortalaması)
     bugun_ts = pd.Timestamp(simdi.date(), tz=gecmis.index.tz)
     bugun_ec = ec_med[ec_med.index.normalize() == bugun_ts]
     if not bugun_ec.empty:
@@ -278,7 +320,6 @@ def _rl_grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi):
     ax.plot(ec_med.index,  ec_med.values,  color="#00bfff", linewidth=1.8, label="EC median")
     ax.plot(gfs_med.index, gfs_med.values, color="#c084fc", linewidth=1.8, label="GFS median")
 
-    # Normal
     if normal is not None:
         normal_d = normal.resample("D").mean()
         ax.plot(normal_d.index, normal_d.values, color="#a0a0a0",
@@ -288,7 +329,7 @@ def _rl_grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi):
 
     ax.set_xlim(xlim)
     ax.set_ylabel("MWh/h", color="white")
-    ax.set_title(f"Residual load – Daily – MWh/h – {kod}",
+    ax.set_title(f"{baslik} – Daily – MWh/h – {kod}",
                  color="white", fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
     ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
@@ -306,7 +347,7 @@ def _rl_grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi):
     return buf
 
 
-async def _rl_komut(update, context, saatlik: bool):
+async def _komut(update, context, saatlik, actual_dict, forecast_dict, kaynak, baslik):
     args = context.args
     ulke = args[0].lower() if args else "de"
     kod  = ULKE_KODLARI.get(ulke)
@@ -318,28 +359,74 @@ async def _rl_komut(update, context, saatlik: bool):
         )
         return
 
-    await update.message.reply_text(f"Hazırlanıyor...")
+    await update.message.reply_text("Hazırlanıyor...")
 
     try:
-        actual, normal, ec, gfs, begin, end, simdi = await asyncio.to_thread(_rl_veri_cek, kod)
+        actual, normal, ec, gfs, begin, end, simdi = await asyncio.to_thread(
+            _veri_cek, kod, actual_dict, forecast_dict, kaynak
+        )
         if saatlik:
-            buf = await asyncio.to_thread(_rl_grafik_saatlik, kod, actual, ec, gfs, begin, end, simdi)
+            buf = await asyncio.to_thread(
+                _grafik_saatlik, kod, actual, ec, gfs, begin, end, simdi, baslik
+            )
         else:
-            buf = await asyncio.to_thread(_rl_grafik_gunluk,  kod, actual, normal, ec, gfs, begin, end, simdi)
+            buf = await asyncio.to_thread(
+                _grafik_gunluk, kod, actual, normal, ec, gfs, begin, end, simdi, baslik
+            )
         await update.message.reply_photo(photo=buf)
     except Exception as e:
         await update.message.reply_text(f"Hata: {e}")
 
 
+# ── Residual Load commands ────────────────────────────────────────────────────
+
 async def eqrl(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _rl_komut(update, context, saatlik=False)
+    await _komut(update, context, saatlik=False,
+                 actual_dict=RL_ACTUAL_CURVE, forecast_dict=RL_FORECAST_CURVE,
+                 kaynak="Residual Load", baslik="Residual load")
 
 
 async def eqrlh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _rl_komut(update, context, saatlik=True)
+    await _komut(update, context, saatlik=True,
+                 actual_dict=RL_ACTUAL_CURVE, forecast_dict=RL_FORECAST_CURVE,
+                 kaynak="Residual Load", baslik="Residual load")
 
+
+# ── Wind Power commands ───────────────────────────────────────────────────────
+
+async def eqwind(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _komut(update, context, saatlik=False,
+                 actual_dict=WIND_ACTUAL_CURVE, forecast_dict=WIND_FORECAST_CURVE,
+                 kaynak="Wind Power", baslik="Wind Power")
+
+
+async def eqwindh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _komut(update, context, saatlik=True,
+                 actual_dict=WIND_ACTUAL_CURVE, forecast_dict=WIND_FORECAST_CURVE,
+                 kaynak="Wind Power", baslik="Wind Power")
+
+
+# ── Solar Power commands ──────────────────────────────────────────────────────
+
+async def eqsolar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _komut(update, context, saatlik=False,
+                 actual_dict=SOLAR_ACTUAL_CURVE, forecast_dict=SOLAR_FORECAST_CURVE,
+                 kaynak="Solar Power", baslik="Solar Power")
+
+
+async def eqsolarh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _komut(update, context, saatlik=True,
+                 actual_dict=SOLAR_ACTUAL_CURVE, forecast_dict=SOLAR_FORECAST_CURVE,
+                 kaynak="Solar Power", baslik="Solar Power")
+
+
+# ── Handler registration ──────────────────────────────────────────────────────
 
 def eq_handlerlari_ekle(app):
     app.add_handler(CommandHandler("eqnukleer", eqnukleer))
     app.add_handler(CommandHandler("eqrl",      eqrl))
     app.add_handler(CommandHandler("eqrlh",     eqrlh))
+    app.add_handler(CommandHandler("eqwind",    eqwind))
+    app.add_handler(CommandHandler("eqwindh",   eqwindh))
+    app.add_handler(CommandHandler("eqsolar",   eqsolar))
+    app.add_handler(CommandHandler("eqsolarh",  eqsolarh))
