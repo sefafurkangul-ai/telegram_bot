@@ -145,9 +145,20 @@ RL_FORECAST_CURVE = {
 }
 
 
+def _en_guncel_tam_instance(eq, curve, tag, min_gun=16):
+    """En güncel run'ı al; min_gun'den kısa ise bir öncekini dene."""
+    insts = eq.instances.list(curve=curve, tags=tag, limit=10)
+    df = None
+    for inst_meta in insts:
+        df = eq.instances.get(curve=curve, issued=inst_meta.issued, tag=tag, ensembles=True).to_pandas_dataframe()
+        gun_sayisi = (df.index[-1] - df.index[0]).days
+        if gun_sayisi >= min_gun:
+            return df
+    return df
+
+
 def _rl_veri_cek(kod):
     from energyquantified import EnergyQuantified
-    from datetime import time as dtime
     eq = EnergyQuantified(api_key=EQ_API_KEY)
 
     simdi  = datetime.now(timezone.utc)
@@ -172,19 +183,11 @@ def _rl_veri_cek(kod):
     except Exception:
         normal = None
 
-    ec = eq.instances.latest(
-        curve=forecast_curve,
-        tags="ec-ens", ensembles=True,
-        issued_time_of_day=dtime(0, 0),
-    ).to_pandas_dataframe()
+    ec = _en_guncel_tam_instance(eq, forecast_curve, "ec-ens")
     ec.columns = [c[2] if c[2] else "mean" for c in ec.columns]
     ec = ec.resample("h").mean()
 
-    gfs = eq.instances.latest(
-        curve=forecast_curve,
-        tags="gfs-ens", ensembles=True,
-        issued_time_of_day=dtime(0, 0),
-    ).to_pandas_dataframe()
+    gfs = _en_guncel_tam_instance(eq, forecast_curve, "gfs-ens")
     gfs.columns = [c[2] if c[2] else "mean" for c in gfs.columns]
     gfs = gfs.resample("h").mean()
 
