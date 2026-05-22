@@ -128,6 +128,23 @@ async def eqnukleer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Hata: {e}")
 
 
+RL_ACTUAL_CURVE = {
+    "DE": "DE Residual Load MWh/h 15min Actual",
+    "FR": "FR Residual Load MWh/h 30min Actual",
+    "BE": "BE Residual Load MWh/h 15min Actual",
+    "GB": "GB Residual Load MWh/h 30min Actual",
+    "NL": "NL Residual Load MWh/h 15min Actual",
+}
+
+RL_FORECAST_CURVE = {
+    "DE": "DE Residual Load MWh/h 15min Forecast",
+    "FR": "FR Residual Load MWh/h 15min Forecast",
+    "BE": "BE Residual Load MWh/h 15min Forecast",
+    "GB": "GB Residual Load MWh/h 15min Forecast",
+    "NL": "NL Residual Load MWh/h 15min Forecast",
+}
+
+
 def _rl_veri_cek(kod):
     from energyquantified import EnergyQuantified
     eq = EnergyQuantified(api_key=EQ_API_KEY)
@@ -137,20 +154,23 @@ def _rl_veri_cek(kod):
     begin  = bugun - timedelta(days=10)
     end    = bugun + timedelta(days=15)
 
+    actual_curve   = RL_ACTUAL_CURVE.get(kod, f"{kod} Residual Load MWh/h 15min Actual")
+    forecast_curve = RL_FORECAST_CURVE.get(kod, f"{kod} Residual Load MWh/h 15min Forecast")
+
     actual = eq.timeseries.load(
-        curve=f"{kod} Residual Load MWh/h 15min Actual",
+        curve=actual_curve,
         begin=str(begin), end=str(end),
     ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
 
     ec = eq.instances.latest(
-        curve=f"{kod} Residual Load MWh/h 15min Forecast",
+        curve=forecast_curve,
         tags="ec-ens", ensembles=True,
     ).to_pandas_dataframe()
     ec.columns = [c[2] if c[2] else "mean" for c in ec.columns]
     ec = ec.resample("h").mean()
 
     gfs = eq.instances.latest(
-        curve=f"{kod} Residual Load MWh/h 15min Forecast",
+        curve=forecast_curve,
         tags="gfs-ens", ensembles=True,
     ).to_pandas_dataframe()
     gfs.columns = [c[2] if c[2] else "mean" for c in gfs.columns]
