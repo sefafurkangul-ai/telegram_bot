@@ -174,7 +174,7 @@ def _rl_veri_cek(kod):
         begin=str(begin), end=str(end),
     ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
 
-    normal_curve = RL_ACTUAL_CURVE.get(kod, f"{kod} Residual Load MWh/h 15min Actual").replace("Actual", "Normal")
+    normal_curve = f"{kod} Residual Load MWh/h 15min Normal"
     try:
         normal = eq.timeseries.load(
             curve=normal_curve,
