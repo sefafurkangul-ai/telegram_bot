@@ -250,9 +250,10 @@ def _rl_grafik_gunluk(kod, actual, ec, gfs, begin, end, simdi):
     xlim     = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
     now_line = pd.Timestamp(simdi)
 
-    # Yalnızca tamamlanmış günler (bugün hariç)
-    bugun_ts = pd.Timestamp(simdi.date(), tz="UTC")
-    gecmis   = actual_d[actual_d.index < bugun_ts]
+    # Yalnızca tamamlanmış günler: 20+ saatlik verisi olan günler
+    saatlik_sayim = actual.resample("D").count()
+    tam_gunler    = saatlik_sayim[saatlik_sayim >= 20].index
+    gecmis        = actual_d[actual_d.index.isin(tam_gunler)]
     ec_med   = ec_d[[c for c in ec_d.columns if c.startswith("e")]].median(axis=1)
     gfs_med  = gfs_d[[c for c in gfs_d.columns if c.startswith("e")]].median(axis=1)
 
