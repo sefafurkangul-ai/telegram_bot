@@ -163,6 +163,15 @@ def _rl_veri_cek(kod):
         begin=str(begin), end=str(end),
     ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
 
+    normal_curve = RL_ACTUAL_CURVE.get(kod, f"{kod} Residual Load MWh/h 15min Actual").replace("Actual", "Normal")
+    try:
+        normal = eq.timeseries.load(
+            curve=normal_curve,
+            begin=str(begin), end=str(end),
+        ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
+    except Exception:
+        normal = None
+
     ec = eq.instances.latest(
         curve=forecast_curve,
         tags="ec-ens", ensembles=True,
@@ -179,7 +188,7 @@ def _rl_veri_cek(kod):
     gfs.columns = [c[2] if c[2] else "mean" for c in gfs.columns]
     gfs = gfs.resample("h").mean()
 
-    return actual, ec, gfs, begin, end, simdi
+    return actual, normal, ec, gfs, begin, end, simdi
 
 
 def _ax_stil(ax):
@@ -238,7 +247,7 @@ def _rl_grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi):
     return buf
 
 
-def _rl_grafik_gunluk(kod, actual, ec, gfs, begin, end, simdi):
+def _rl_grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi):
     actual_d = actual.resample("D").mean()
     ec_d     = ec.resample("D").mean()
     gfs_d    = gfs.resample("D").mean()
@@ -250,16 +259,32 @@ def _rl_grafik_gunluk(kod, actual, ec, gfs, begin, end, simdi):
     xlim     = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
     now_line = pd.Timestamp(simdi)
 
-    # Yalnızca tamamlanmış günler: 20+ saatlik verisi olan günler
+    # Tamamlanmış günler (20+ saatlik veri)
     saatlik_sayim = actual.resample("D").count()
     tam_gunler    = saatlik_sayim[saatlik_sayim >= 20].index
     gecmis        = actual_d[actual_d.index.isin(tam_gunler)]
-    ec_med   = ec_d[[c for c in ec_d.columns if c.startswith("e")]].median(axis=1)
-    gfs_med  = gfs_d[[c for c in gfs_d.columns if c.startswith("e")]].median(axis=1)
+
+    ec_med  = ec_d[[c for c in ec_d.columns if c.startswith("e")]].median(axis=1)
+    gfs_med = gfs_d[[c for c in gfs_d.columns if c.startswith("e")]].median(axis=1)
+
+    # Bugün için forecast barı (en yakın EC median günlük ortalaması)
+    bugun_ts = pd.Timestamp(simdi.date(), tz=gecmis.index.tz)
+    bugun_ec = ec_med[ec_med.index.normalize() == bugun_ts]
+    if not bugun_ec.empty:
+        ax.bar([bugun_ts], [bugun_ec.mean()], width=0.8,
+               color="#2a4a6a", alpha=0.8, edgecolor="#00bfff",
+               linewidth=1.2, label="Today (EC forecast)")
 
     ax.bar(gecmis.index, gecmis.values, width=0.8, color="#4a4a6a", alpha=0.8, label="Actual (daily avg)")
     ax.plot(ec_med.index,  ec_med.values,  color="#00bfff", linewidth=1.8, label="EC median")
     ax.plot(gfs_med.index, gfs_med.values, color="#c084fc", linewidth=1.8, label="GFS median")
+
+    # Normal
+    if normal is not None:
+        normal_d = normal.resample("D").mean()
+        ax.plot(normal_d.index, normal_d.values, color="#a0a0a0",
+                linewidth=1.2, linestyle="--", label="Normal")
+
     ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
 
     ax.set_xlim(xlim)
@@ -297,11 +322,11 @@ async def _rl_komut(update, context, saatlik: bool):
     await update.message.reply_text(f"Hazırlanıyor...")
 
     try:
-        actual, ec, gfs, begin, end, simdi = await asyncio.to_thread(_rl_veri_cek, kod)
+        actual, normal, ec, gfs, begin, end, simdi = await asyncio.to_thread(_rl_veri_cek, kod)
         if saatlik:
             buf = await asyncio.to_thread(_rl_grafik_saatlik, kod, actual, ec, gfs, begin, end, simdi)
         else:
-            buf = await asyncio.to_thread(_rl_grafik_gunluk,  kod, actual, ec, gfs, begin, end, simdi)
+            buf = await asyncio.to_thread(_rl_grafik_gunluk,  kod, actual, normal, ec, gfs, begin, end, simdi)
         await update.message.reply_photo(photo=buf)
     except Exception as e:
         await update.message.reply_text(f"Hata: {e}")
