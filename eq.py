@@ -128,5 +128,120 @@ async def eqnukleer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Hata: {e}")
 
 
+def _rl_veri_cek(kod):
+    from energyquantified import EnergyQuantified
+    eq = EnergyQuantified(api_key=EQ_API_KEY)
+
+    simdi  = datetime.now(timezone.utc)
+    bugun  = simdi.date()
+    begin  = bugun - timedelta(days=10)
+    end    = bugun + timedelta(days=15)
+
+    actual = eq.timeseries.load(
+        curve=f"{kod} Residual Load MWh/h 15min Actual",
+        begin=str(begin), end=str(end),
+    ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
+
+    ec = eq.instances.latest(
+        curve=f"{kod} Residual Load MWh/h 15min Forecast",
+        tags="ec-ens", ensembles=True,
+    ).to_pandas_dataframe()
+    ec.columns = [c[2] if c[2] else "mean" for c in ec.columns]
+    ec = ec.resample("h").mean()
+
+    gfs = eq.instances.latest(
+        curve=f"{kod} Residual Load MWh/h 15min Forecast",
+        tags="gfs-ens", ensembles=True,
+    ).to_pandas_dataframe()
+    gfs.columns = [c[2] if c[2] else "mean" for c in gfs.columns]
+    gfs = gfs.resample("h").mean()
+
+    return actual, ec, gfs, begin, end, simdi
+
+
+def _rl_grafik_olustur(kod, actual, ec, gfs, begin, end, simdi):
+    fig, axes = plt.subplots(1, 2, figsize=(16, 5), sharey=True)
+    fig.patch.set_facecolor("#1a1a2e")
+
+    xlim = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
+    now_line = pd.Timestamp(simdi)
+
+    for ax, df, baslik, renk in [
+        (axes[0], ec,  f"EC ensemble – Residual load – MWh/h – {kod}", "#00bfff"),
+        (axes[1], gfs, f"GFS ensemble – Residual load – MWh/h – {kod}", "#9370db"),
+    ]:
+        ax.set_facecolor("#1a1a2e")
+        ax.tick_params(colors="white")
+        ax.xaxis.label.set_color("white")
+        ax.yaxis.label.set_color("white")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#444")
+        ax.grid(True, linestyle="--", alpha=0.25, color="gray")
+
+        # Ensemble üyeleri (e00..eNN)
+        uyeler = [c for c in df.columns if c.startswith("e")]
+        ens_df = df[uyeler]
+
+        p10 = ens_df.quantile(0.10, axis=1)
+        p25 = ens_df.quantile(0.25, axis=1)
+        p75 = ens_df.quantile(0.75, axis=1)
+        p90 = ens_df.quantile(0.90, axis=1)
+        median = ens_df.median(axis=1)
+
+        ax.fill_between(p10.index, p10, p90, alpha=0.25, color=renk, linewidth=0)
+        ax.fill_between(p25.index, p25, p75, alpha=0.40, color=renk, linewidth=0)
+        ax.plot(median.index, median, color=renk, linewidth=1.5, label="Median")
+
+        # Gerçekleşen
+        ax.plot(actual.index, actual, color="#f0c040", linewidth=1.5, label="Actual")
+
+        # Şimdiki zaman çizgisi
+        ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
+
+        ax.set_xlim(xlim)
+        ax.set_title(baslik, color="white", fontsize=9, pad=6)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+        ax.legend(fontsize=8, facecolor="#1a1a2e", labelcolor="white")
+
+    axes[0].set_ylabel("MWh/h", color="white")
+    fig.suptitle(
+        f"Last refreshed: {simdi.strftime('%Y-%m-%d %H:%M')} UTC",
+        color="white", fontsize=9, y=1.01,
+    )
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
+async def eqrl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    ulke = args[0].lower() if args else "de"
+    kod  = ULKE_KODLARI.get(ulke)
+
+    if not kod:
+        await update.message.reply_text(
+            f"Bilinmeyen ülke: {ulke}\n"
+            f"Desteklenen: {', '.join(sorted(set(ULKE_KODLARI.values())))}"
+        )
+        return
+
+    await update.message.reply_text(f"⏳ {kod} residual load grafik hazırlanıyor...")
+
+    try:
+        actual, ec, gfs, begin, end, simdi = await asyncio.to_thread(_rl_veri_cek, kod)
+        buf = await asyncio.to_thread(_rl_grafik_olustur, kod, actual, ec, gfs, begin, end, simdi)
+        await update.message.reply_photo(photo=buf)
+    except Exception as e:
+        await update.message.reply_text(f"Hata: {e}")
+
+
 def eq_handlerlari_ekle(app):
     app.add_handler(CommandHandler("eqnukleer", eqnukleer))
+    app.add_handler(CommandHandler("eqrl", eqrl))
