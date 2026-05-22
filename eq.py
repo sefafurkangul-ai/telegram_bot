@@ -55,40 +55,64 @@ RL_FORECAST_CURVE = {
     "NL": "NL Residual Load MWh/h 15min Forecast",
 }
 
+RL_NORMAL_CURVE = {
+    "DE": "DE Residual Load MWh/h 15min Normal",
+    "FR": "FR Residual Load MWh/h 15min Normal",
+    "BE": "BE Residual Load MWh/h 15min Normal",
+    "GB": "GB Residual Load MWh/h 15min Normal",
+    "NL": "NL Residual Load MWh/h 15min Normal",
+}
+
 # ── Wind Power curves ─────────────────────────────────────────────────────────
 
 WIND_ACTUAL_CURVE = {
-    "DE": "DE Wind Power MWh/h 15min Actual",
-    "FR": "FR Wind Power MWh/h 30min Actual",
-    "BE": "BE Wind Power MWh/h 15min Actual",
-    "GB": "GB Wind Power MWh/h 30min Actual",
-    "NL": "NL Wind Power MWh/h 15min Actual",
+    "DE": "DE Wind Power Production MWh/h 15min Actual",
+    "FR": "FR Wind Power Production MWh/h 30min Actual",
+    "BE": "BE Wind Power Production MWh/h H Actual",
+    "GB": "GB Wind Power Production MWh/h 30min Actual",
+    "NL": "NL Wind Power Production MWh/h 15min Actual",
 }
 
 WIND_FORECAST_CURVE = {
-    "DE": "DE Wind Power MWh/h 15min Forecast",
-    "FR": "FR Wind Power MWh/h 15min Forecast",
-    "BE": "BE Wind Power MWh/h 15min Forecast",
-    "GB": "GB Wind Power MWh/h 15min Forecast",
-    "NL": "NL Wind Power MWh/h 15min Forecast",
+    "DE": "DE Wind Power Production MWh/h 15min Forecast",
+    "FR": "FR Wind Power Production MWh/h 15min Forecast",
+    "BE": "BE Wind Power Production MWh/h 15min Forecast",
+    "GB": "GB Wind Power Production MWh/h 15min Forecast",
+    "NL": "NL Wind Power Production MWh/h 15min Forecast",
+}
+
+WIND_NORMAL_CURVE = {
+    "DE": "DE Wind Power Production MWh/h 15min Normal",
+    "FR": "FR Wind Power Production MWh/h 15min Normal",
+    "BE": "BE Wind Power Production MWh/h 15min Normal",
+    "GB": "GB Wind Power Production MWh/h 15min Normal",
+    "NL": "NL Wind Power Production MWh/h 15min Normal",
 }
 
 # ── Solar Power curves ────────────────────────────────────────────────────────
 
 SOLAR_ACTUAL_CURVE = {
-    "DE": "DE Solar Power MWh/h 15min Actual",
-    "FR": "FR Solar Power MWh/h 30min Actual",
-    "BE": "BE Solar Power MWh/h 15min Actual",
-    "GB": "GB Solar Power MWh/h 30min Actual",
-    "NL": "NL Solar Power MWh/h 15min Actual",
+    "DE": "DE Solar Photovoltaic Production MWh/h 15min Actual",
+    "FR": "FR Solar Photovoltaic Production MWh/h 30min Actual",
+    "BE": "BE Solar Photovoltaic Production MWh/h H Actual",
+    "GB": "GB Solar Photovoltaic Production MWh/h 30min Actual",
+    "NL": "NL Solar Photovoltaic Production MWh/h 15min Actual",
 }
 
 SOLAR_FORECAST_CURVE = {
-    "DE": "DE Solar Power MWh/h 15min Forecast",
-    "FR": "FR Solar Power MWh/h 15min Forecast",
-    "BE": "BE Solar Power MWh/h 15min Forecast",
-    "GB": "GB Solar Power MWh/h 15min Forecast",
-    "NL": "NL Solar Power MWh/h 15min Forecast",
+    "DE": "DE Solar Photovoltaic Production MWh/h 15min Forecast",
+    "FR": "FR Solar Photovoltaic Production MWh/h 15min Forecast",
+    "BE": "BE Solar Photovoltaic Production MWh/h 15min Forecast",
+    "GB": "GB Solar Photovoltaic Production MWh/h 15min Forecast",
+    "NL": "NL Solar Photovoltaic Production MWh/h 15min Forecast",
+}
+
+SOLAR_NORMAL_CURVE = {
+    "DE": "DE Solar Photovoltaic Production MWh/h 15min Normal",
+    "FR": "FR Solar Photovoltaic Production MWh/h 15min Normal",
+    "BE": "BE Solar Photovoltaic Production MWh/h 15min Normal",
+    "GB": "GB Solar Photovoltaic Production MWh/h 15min Normal",
+    "NL": "NL Solar Photovoltaic Production MWh/h 15min Normal",
 }
 
 
@@ -186,7 +210,7 @@ async def eqnukleer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Generic data fetch & charts ───────────────────────────────────────────────
 
-def _veri_cek(kod, actual_dict, forecast_dict, kaynak):
+def _veri_cek(kod, actual_dict, forecast_dict, normal_dict=None):
     from energyquantified import EnergyQuantified
     from datetime import time as dtime
     eq = EnergyQuantified(api_key=EQ_API_KEY)
@@ -196,22 +220,23 @@ def _veri_cek(kod, actual_dict, forecast_dict, kaynak):
     begin  = bugun - timedelta(days=10)
     end    = bugun + timedelta(days=15)
 
-    actual_curve   = actual_dict.get(kod, f"{kod} {kaynak} MWh/h 15min Actual")
-    forecast_curve = forecast_dict.get(kod, f"{kod} {kaynak} MWh/h 15min Forecast")
+    actual_curve   = actual_dict[kod]
+    forecast_curve = forecast_dict[kod]
 
     actual = eq.timeseries.load(
         curve=actual_curve,
         begin=str(begin), end=str(end),
     ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
 
-    normal_curve = f"{kod} {kaynak} MWh/h 15min Normal"
-    try:
-        normal = eq.timeseries.load(
-            curve=normal_curve,
-            begin=str(begin), end=str(end),
-        ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
-    except Exception:
-        normal = None
+    normal = None
+    if normal_dict and kod in normal_dict:
+        try:
+            normal = eq.timeseries.load(
+                curve=normal_dict[kod],
+                begin=str(begin), end=str(end),
+            ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
+        except Exception:
+            pass
 
     ec = eq.instances.latest(
         curve=forecast_curve, tags="ec-ens", ensembles=True,
@@ -228,10 +253,6 @@ def _veri_cek(kod, actual_dict, forecast_dict, kaynak):
     gfs = gfs.resample("h").mean()
 
     return actual, normal, ec, gfs, begin, end, simdi
-
-
-def _rl_veri_cek(kod):
-    return _veri_cek(kod, RL_ACTUAL_CURVE, RL_FORECAST_CURVE, "Residual Load")
 
 
 def _ax_stil(ax):
@@ -347,7 +368,7 @@ def _grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi, baslik):
     return buf
 
 
-async def _komut(update, context, saatlik, actual_dict, forecast_dict, kaynak, baslik):
+async def _komut(update, context, saatlik, actual_dict, forecast_dict, normal_dict, baslik):
     args = context.args
     ulke = args[0].lower() if args else "de"
     kod  = ULKE_KODLARI.get(ulke)
@@ -359,11 +380,18 @@ async def _komut(update, context, saatlik, actual_dict, forecast_dict, kaynak, b
         )
         return
 
+    if kod not in actual_dict:
+        await update.message.reply_text(
+            f"{kod} bu komut için henüz desteklenmiyor.\n"
+            f"Desteklenen: {', '.join(sorted(actual_dict.keys()))}"
+        )
+        return
+
     await update.message.reply_text("Hazırlanıyor...")
 
     try:
         actual, normal, ec, gfs, begin, end, simdi = await asyncio.to_thread(
-            _veri_cek, kod, actual_dict, forecast_dict, kaynak
+            _veri_cek, kod, actual_dict, forecast_dict, normal_dict
         )
         if saatlik:
             buf = await asyncio.to_thread(
@@ -383,13 +411,13 @@ async def _komut(update, context, saatlik, actual_dict, forecast_dict, kaynak, b
 async def eqrl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _komut(update, context, saatlik=False,
                  actual_dict=RL_ACTUAL_CURVE, forecast_dict=RL_FORECAST_CURVE,
-                 kaynak="Residual Load", baslik="Residual load")
+                 normal_dict=RL_NORMAL_CURVE, baslik="Residual load")
 
 
 async def eqrlh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _komut(update, context, saatlik=True,
                  actual_dict=RL_ACTUAL_CURVE, forecast_dict=RL_FORECAST_CURVE,
-                 kaynak="Residual Load", baslik="Residual load")
+                 normal_dict=RL_NORMAL_CURVE, baslik="Residual load")
 
 
 # ── Wind Power commands ───────────────────────────────────────────────────────
@@ -397,13 +425,13 @@ async def eqrlh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def eqwind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _komut(update, context, saatlik=False,
                  actual_dict=WIND_ACTUAL_CURVE, forecast_dict=WIND_FORECAST_CURVE,
-                 kaynak="Wind Power", baslik="Wind Power")
+                 normal_dict=WIND_NORMAL_CURVE, baslik="Wind Power")
 
 
 async def eqwindh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _komut(update, context, saatlik=True,
                  actual_dict=WIND_ACTUAL_CURVE, forecast_dict=WIND_FORECAST_CURVE,
-                 kaynak="Wind Power", baslik="Wind Power")
+                 normal_dict=WIND_NORMAL_CURVE, baslik="Wind Power")
 
 
 # ── Solar Power commands ──────────────────────────────────────────────────────
@@ -411,13 +439,13 @@ async def eqwindh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def eqsolar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _komut(update, context, saatlik=False,
                  actual_dict=SOLAR_ACTUAL_CURVE, forecast_dict=SOLAR_FORECAST_CURVE,
-                 kaynak="Solar Power", baslik="Solar Power")
+                 normal_dict=SOLAR_NORMAL_CURVE, baslik="Solar Power")
 
 
 async def eqsolarh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _komut(update, context, saatlik=True,
                  actual_dict=SOLAR_ACTUAL_CURVE, forecast_dict=SOLAR_FORECAST_CURVE,
-                 kaynak="Solar Power", baslik="Solar Power")
+                 normal_dict=SOLAR_NORMAL_CURVE, baslik="Solar Power")
 
 
 # ── Handler registration ──────────────────────────────────────────────────────
