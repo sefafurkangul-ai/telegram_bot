@@ -1,7 +1,5 @@
 import os
 import asyncio
-import requests
-import urllib3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import Update
@@ -14,7 +12,10 @@ except ImportError:
 
 CET = ZoneInfo("Europe/Berlin")
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+_EQ_API_KEY   = os.environ.get("EQ_API_KEY")
+_EPIAS_USER   = os.environ.get("EPIAS_USERNAME")
+_EPIAS_PASS   = os.environ.get("EPIAS_PASSWORD")
+_EPIAS_SSL    = not bool(os.environ.get("LOCAL_PROXY"))
 
 PIYASALAR = [
     ("DE-LU",    "DE-LU   "),
@@ -30,10 +31,19 @@ PIYASALAR = [
     ("ES",       "ES      "),
 ]
 
-EC_URL    = "https://api.energy-charts.info/price"
-_EPIAS_USER   = os.environ.get("EPIAS_USERNAME")
-_EPIAS_PASS   = os.environ.get("EPIAS_PASSWORD")
-_EPIAS_SSL    = not bool(os.environ.get("LOCAL_PROXY"))
+DAYAHEAD_CURVE = {
+    "DE-LU":    "DE Price Spot EUR/MWh EPEX 15min Actual",
+    "FR":       "FR Price Spot EUR/MWh EPEX 15min Actual",
+    "AT":       "AT Price Spot EUR/MWh EPEX 15min Actual",
+    "BE":       "BE Price Spot EUR/MWh EPEX 15min Actual",
+    "NL":       "NL Price Spot EUR/MWh EPEX 15min Actual",
+    "HU":       "HU Price Spot EUR/MWh HUPX 15min Actual",
+    "IT-North": "IT Price Spot EUR/MWh GME 15min Actual",
+    "GR":       "GR Price Spot EUR/MWh HEnEx 15min Actual",
+    "BG":       "BG Price Spot EUR/MWh IBEX 15min Actual",
+    "RO":       "RO Price Spot EUR/MWh OPCOM 15min Actual",
+    "ES":       "ES Price Spot EUR/MWh OMIE 15min Actual",
+}
 
 
 def _epias_ptf(tarih: str):
@@ -63,26 +73,26 @@ def _epias_ptf(tarih: str):
 
 
 def _da_fiyat(bzn: str, tarih: str):
-    """Energy Charts'tan bir piyasanın gün öncesi fiyat özeti."""
+    """EQ'dan bir piyasanın gün öncesi fiyat özeti."""
+    curve = DAYAHEAD_CURVE.get(bzn)
+    if not curve:
+        return None
     try:
-        r = requests.get(f"{EC_URL}?bzn={bzn}&start={tarih}&end={tarih}",
-                         verify=False, timeout=10)
-        d = r.json()
-        prices = d.get("price", [])
-        unix   = d.get("unix_seconds", [])
-        if not prices or not unix:
+        from energyquantified import EnergyQuantified
+        eq  = EnergyQuantified(api_key=_EQ_API_KEY)
+        end = (datetime.strptime(tarih, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        df  = eq.timeseries.load(curve=curve, begin=tarih, end=end).to_pandas_dataframe()
+        if df.empty:
+            return None
+        series = df.iloc[:, 0].resample("h").mean().dropna()
+        if series.empty:
             return None
 
-        pairs = [(ts, p) for ts, p in zip(unix, prices) if p is not None]
-        if not pairs:
-            return None
-
-        base = round(sum(p for _, p in pairs) / len(pairs), 1)
+        base = round(float(series.mean()), 1)
 
         # Peak: 07:00–19:00 UTC ≈ 08:00–20:00 CET
-        peak_vals = [p for ts, p in pairs
-                     if 7 <= (ts % 86400) // 3600 < 19]
-        peak = round(sum(peak_vals) / len(peak_vals), 1) if peak_vals else None
+        peak_vals = series[series.index.hour.isin(range(7, 19))]
+        peak = round(float(peak_vals.mean()), 1) if not peak_vals.empty else None
 
         return {"base": base, "peak": peak}
     except Exception:
