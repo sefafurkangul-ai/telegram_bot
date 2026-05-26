@@ -115,6 +115,24 @@ SOLAR_NORMAL_CURVE = {
     "NL": "NL Solar Photovoltaic Production MWh/h 15min Normal",
 }
 
+# ── Spot Price curves ─────────────────────────────────────────────────────────
+
+FIYAT_ACTUAL_CURVE = {
+    "DE": "DE Price Spot EUR/MWh EPEX 15min Actual",
+    "FR": "FR Price Spot EUR/MWh EPEX 15min Actual",
+    "BE": "BE Price Spot EUR/MWh EPEX 15min Actual",
+    "GB": "GB Price Spot EUR/MWh EPEX H Actual",
+    "NL": "NL Price Spot EUR/MWh EPEX 15min Actual",
+}
+
+FIYAT_ENSEMBLE_CURVE = {
+    "DE": "DE Price Spot Ensemble EUR/MWh H Forecast",
+    "FR": "FR Price Spot Ensemble EUR/MWh H Forecast",
+    "BE": "BE Price Spot Ensemble EUR/MWh H Forecast",
+    "GB": "GB Price Spot Ensemble EUR/MWh H Forecast",
+    "NL": "NL Price Spot Ensemble EUR/MWh H Forecast",
+}
+
 
 # ── Nuclear REMIT ─────────────────────────────────────────────────────────────
 
@@ -406,6 +424,145 @@ async def _komut(update, context, saatlik, actual_dict, forecast_dict, normal_di
         await update.message.reply_text(f"Hata: {e}")
 
 
+# ── Spot Price data fetch & charts ───────────────────────────────────────────
+
+def _fiyat_veri_cek(kod):
+    from energyquantified import EnergyQuantified
+    eq = EnergyQuantified(api_key=EQ_API_KEY)
+
+    simdi  = datetime.now(timezone.utc)
+    bugun  = simdi.date()
+    begin  = bugun - timedelta(days=10)
+    end    = bugun + timedelta(days=15)
+
+    actual = eq.timeseries.load(
+        curve=FIYAT_ACTUAL_CURVE[kod],
+        begin=str(begin), end=str(end),
+    ).to_pandas_dataframe().iloc[:, 0].resample("h").mean()
+
+    ens = eq.instances.latest(
+        curve=FIYAT_ENSEMBLE_CURVE[kod], ensembles=True,
+    ).to_pandas_dataframe()
+    ens.columns = [c[2] if c[2] else "mean" for c in ens.columns]
+    ens = ens.resample("h").mean()
+
+    return actual, ens, begin, end, simdi
+
+
+def _fiyat_grafik_saatlik(kod, actual, ens, begin, end, simdi):
+    fig, ax = plt.subplots(figsize=(14, 5))
+    fig.patch.set_facecolor("#1a1a2e")
+    _ax_stil(ax)
+
+    xlim     = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
+    now_line = pd.Timestamp(simdi)
+
+    _ensemble_plot(ax, ens, "#ff9f40", "Price ensemble")
+    ax.plot(actual.index, actual, color="#f0c040", linewidth=1.5, label="Actual", zorder=5)
+    ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
+
+    ax.set_xlim(xlim)
+    ax.set_ylabel("EUR/MWh", color="white")
+    ax.set_title(f"Spot Price – EUR/MWh – {kod}  |  Price ensemble",
+                 color="white", fontsize=9)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+    ax.legend(fontsize=8, facecolor="#1a1a2e", labelcolor="white")
+    fig.suptitle(f"Last refreshed: {simdi.strftime('%Y-%m-%d %H:%M')} UTC",
+                 color="white", fontsize=8, y=1.01)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
+def _fiyat_grafik_gunluk(kod, actual, ens, begin, end, simdi):
+    actual_d = actual.resample("D").mean()
+    ens_d    = ens.resample("D").mean()
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    fig.patch.set_facecolor("#1a1a2e")
+    _ax_stil(ax)
+
+    xlim     = (pd.Timestamp(begin, tz="UTC"), pd.Timestamp(end, tz="UTC"))
+    now_line = pd.Timestamp(simdi)
+
+    saatlik_sayim = actual.resample("D").count()
+    tam_gunler    = saatlik_sayim[saatlik_sayim >= 20].index
+    gecmis        = actual_d[actual_d.index.isin(tam_gunler)]
+
+    ens_med = ens_d[[c for c in ens_d.columns if c.startswith("e")]].median(axis=1)
+
+    bugun_ts = pd.Timestamp(simdi.date(), tz=gecmis.index.tz)
+    bugun_ens = ens_med[ens_med.index.normalize() == bugun_ts]
+    if not bugun_ens.empty:
+        ax.bar([bugun_ts], [bugun_ens.mean()], width=0.8,
+               color="#3a2a1a", alpha=0.8, edgecolor="#ff9f40",
+               linewidth=1.2, label="Today (forecast)")
+
+    ax.bar(gecmis.index, gecmis.values, width=0.8, color="#4a4a6a", alpha=0.8, label="Actual (daily avg)")
+    ax.plot(ens_med.index, ens_med.values, color="#ff9f40", linewidth=1.8, label="Ensemble median")
+
+    ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
+    ax.axhline(0, color="#555", linewidth=0.6, linestyle="-")
+
+    ax.set_xlim(xlim)
+    ax.set_ylabel("EUR/MWh", color="white")
+    ax.set_title(f"Spot Price – Daily avg – EUR/MWh – {kod}",
+                 color="white", fontsize=9)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+    ax.legend(fontsize=8, facecolor="#1a1a2e", labelcolor="white")
+    fig.suptitle(f"Last refreshed: {simdi.strftime('%Y-%m-%d %H:%M')} UTC",
+                 color="white", fontsize=8, y=1.01)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
+async def _fiyat_komut(update, context, saatlik):
+    args = context.args
+    ulke = args[0].lower() if args else "de"
+    kod  = ULKE_KODLARI.get(ulke)
+
+    if not kod:
+        await update.message.reply_text(
+            f"Bilinmeyen ulke: {ulke}\n"
+            f"Desteklenen: {', '.join(sorted(set(ULKE_KODLARI.values())))}"
+        )
+        return
+
+    if kod not in FIYAT_ACTUAL_CURVE:
+        await update.message.reply_text(
+            f"{kod} bu komut için henüz desteklenmiyor.\n"
+            f"Desteklenen: {', '.join(sorted(FIYAT_ACTUAL_CURVE.keys()))}"
+        )
+        return
+
+    await update.message.reply_text("Hazırlanıyor...")
+
+    try:
+        actual, ens, begin, end, simdi = await asyncio.to_thread(_fiyat_veri_cek, kod)
+        if saatlik:
+            buf = await asyncio.to_thread(_fiyat_grafik_saatlik, kod, actual, ens, begin, end, simdi)
+        else:
+            buf = await asyncio.to_thread(_fiyat_grafik_gunluk,  kod, actual, ens, begin, end, simdi)
+        await update.message.reply_photo(photo=buf)
+    except Exception as e:
+        await update.message.reply_text(f"Hata: {e}")
+
+
 # ── Residual Load commands ────────────────────────────────────────────────────
 
 async def eqrl(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -448,6 +605,16 @@ async def eqsolarh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  normal_dict=SOLAR_NORMAL_CURVE, baslik="Solar Power")
 
 
+# ── Spot Price commands ───────────────────────────────────────────────────────
+
+async def eqfiyat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _fiyat_komut(update, context, saatlik=False)
+
+
+async def eqfiyath(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _fiyat_komut(update, context, saatlik=True)
+
+
 # ── Handler registration ──────────────────────────────────────────────────────
 
 def eq_handlerlari_ekle(app):
@@ -458,3 +625,5 @@ def eq_handlerlari_ekle(app):
     app.add_handler(CommandHandler("eqwindh",   eqwindh))
     app.add_handler(CommandHandler("eqsolar",   eqsolar))
     app.add_handler(CommandHandler("eqsolarh",  eqsolarh))
+    app.add_handler(CommandHandler("eqfiyat",   eqfiyat))
+    app.add_handler(CommandHandler("eqfiyath",  eqfiyath))
