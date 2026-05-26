@@ -115,6 +115,32 @@ SOLAR_NORMAL_CURVE = {
     "NL": "NL Solar Photovoltaic Production MWh/h 15min Normal",
 }
 
+# ── Temperature curves ───────────────────────────────────────────────────────
+
+TEMP_ACTUAL_CURVE = {
+    "DE": "DE Consumption Temperature °C H Actual",
+    "FR": "FR Consumption Temperature °C H Actual",
+    "BE": "BE Consumption Temperature °C H Actual",
+    "GB": "GB Consumption Temperature °C H Actual",
+    "NL": "NL Consumption Temperature °C H Actual",
+}
+
+TEMP_FORECAST_CURVE = {
+    "DE": "DE Consumption Temperature °C 15min Forecast",
+    "FR": "FR Consumption Temperature °C 15min Forecast",
+    "BE": "BE Consumption Temperature °C 15min Forecast",
+    "GB": "GB Consumption Temperature °C 15min Forecast",
+    "NL": "NL Consumption Temperature °C 15min Forecast",
+}
+
+TEMP_NORMAL_CURVE = {
+    "DE": "DE Consumption Temperature °C 15min Normal",
+    "FR": "FR Consumption Temperature °C 15min Normal",
+    "BE": "BE Consumption Temperature °C 15min Normal",
+    "GB": "GB Consumption Temperature °C 15min Normal",
+    "NL": "NL Consumption Temperature °C 15min Normal",
+}
+
 # ── Spot Price curves ─────────────────────────────────────────────────────────
 
 FIYAT_ACTUAL_CURVE = {
@@ -296,7 +322,7 @@ def _ensemble_plot(ax, df, renk, etiket):
     ax.plot(median.index, median, color=renk, linewidth=1.5, label=etiket)
 
 
-def _grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi, baslik):
+def _grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi, baslik, ybirim="MWh/h"):
     fig, ax = plt.subplots(figsize=(14, 5))
     fig.patch.set_facecolor("#1a1a2e")
     _ax_stil(ax)
@@ -310,8 +336,8 @@ def _grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi, baslik):
     ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
 
     ax.set_xlim(xlim)
-    ax.set_ylabel("MWh/h", color="white")
-    ax.set_title(f"{baslik} – MWh/h – {kod}  |  EC & GFS ensemble",
+    ax.set_ylabel(ybirim, color="white")
+    ax.set_title(f"{baslik} – {ybirim} – {kod}  |  EC & GFS ensemble",
                  color="white", fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
     ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
@@ -329,7 +355,7 @@ def _grafik_saatlik(kod, actual, ec, gfs, begin, end, simdi, baslik):
     return buf
 
 
-def _grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi, baslik):
+def _grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi, baslik, ybirim="MWh/h"):
     actual_d = actual.resample("D").mean()
     ec_d     = ec.resample("D").mean()
     gfs_d    = gfs.resample("D").mean()
@@ -367,8 +393,8 @@ def _grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi, baslik):
     ax.axvline(now_line, color="white", linewidth=0.8, linestyle="--", alpha=0.6)
 
     ax.set_xlim(xlim)
-    ax.set_ylabel("MWh/h", color="white")
-    ax.set_title(f"{baslik} – Daily – MWh/h – {kod}",
+    ax.set_ylabel(ybirim, color="white")
+    ax.set_title(f"{baslik} – Daily – {ybirim} – {kod}",
                  color="white", fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
     ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
@@ -386,7 +412,7 @@ def _grafik_gunluk(kod, actual, normal, ec, gfs, begin, end, simdi, baslik):
     return buf
 
 
-async def _komut(update, context, saatlik, actual_dict, forecast_dict, normal_dict, baslik):
+async def _komut(update, context, saatlik, actual_dict, forecast_dict, normal_dict, baslik, ybirim="MWh/h"):
     args = context.args
     ulke = args[0].lower() if args else "de"
     kod  = ULKE_KODLARI.get(ulke)
@@ -413,11 +439,11 @@ async def _komut(update, context, saatlik, actual_dict, forecast_dict, normal_di
         )
         if saatlik:
             buf = await asyncio.to_thread(
-                _grafik_saatlik, kod, actual, ec, gfs, begin, end, simdi, baslik
+                _grafik_saatlik, kod, actual, ec, gfs, begin, end, simdi, baslik, ybirim
             )
         else:
             buf = await asyncio.to_thread(
-                _grafik_gunluk, kod, actual, normal, ec, gfs, begin, end, simdi, baslik
+                _grafik_gunluk, kod, actual, normal, ec, gfs, begin, end, simdi, baslik, ybirim
             )
         await update.message.reply_photo(photo=buf)
     except Exception as e:
@@ -605,6 +631,20 @@ async def eqsolarh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  normal_dict=SOLAR_NORMAL_CURVE, baslik="Solar Power")
 
 
+# ── Temperature commands ─────────────────────────────────────────────────────
+
+async def eqtemp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _komut(update, context, saatlik=False,
+                 actual_dict=TEMP_ACTUAL_CURVE, forecast_dict=TEMP_FORECAST_CURVE,
+                 normal_dict=TEMP_NORMAL_CURVE, baslik="Temperature", ybirim="°C")
+
+
+async def eqtemph(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _komut(update, context, saatlik=True,
+                 actual_dict=TEMP_ACTUAL_CURVE, forecast_dict=TEMP_FORECAST_CURVE,
+                 normal_dict=TEMP_NORMAL_CURVE, baslik="Temperature", ybirim="°C")
+
+
 # ── Spot Price commands ───────────────────────────────────────────────────────
 
 async def eqfiyat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -627,3 +667,5 @@ def eq_handlerlari_ekle(app):
     app.add_handler(CommandHandler("eqsolarh",  eqsolarh))
     app.add_handler(CommandHandler("eqfiyat",   eqfiyat))
     app.add_handler(CommandHandler("eqfiyath",  eqfiyath))
+    app.add_handler(CommandHandler("eqtemp",    eqtemp))
+    app.add_handler(CommandHandler("eqtemph",   eqtemph))
