@@ -9,8 +9,23 @@ from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
-CET    = ZoneInfo("Europe/Berlin")
-EC_URL = "https://api.energy-charts.info/price"
+CET        = ZoneInfo("Europe/Berlin")
+_EQ_API_KEY = os.environ.get("EQ_API_KEY")
+
+_EQ_FIYAT_CURVES = {
+    "DE":  "DE Price Spot EUR/MWh EPEX 15min Actual",
+    "FR":  "FR Price Spot EUR/MWh EPEX 15min Actual",
+    "AT":  "AT Price Spot EUR/MWh EPEX 15min Actual",
+    "BE":  "BE Price Spot EUR/MWh EPEX 15min Actual",
+    "NL":  "NL Price Spot EUR/MWh EPEX 15min Actual",
+    "HU":  "HU Price Spot EUR/MWh HUPX 15min Actual",
+    "IT":  "IT Price Spot EUR/MWh GME 15min Actual",
+    "GR":  "GR Price Spot EUR/MWh HEnEx 15min Actual",
+    "BG":  "BG Price Spot EUR/MWh IBEX 15min Actual",
+    "RO":  "RO Price Spot EUR/MWh OPCOM 15min Actual",
+    "ES":  "ES Price Spot EUR/MWh OMIE 15min Actual",
+    "RS":  "RS Price Spot EUR/MWh SEEPEX 15min Actual",
+}
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -280,21 +295,22 @@ async def piyasa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── BG/RO/GR saatlik fiyat ───────────────────────────────────────────────────
 
 def _saatlik_fiyat(bzn: str, tarih: str) -> dict:
-    """Energy Charts'tan saatlik ortalama fiyatlar {cet_saat: fiyat}.
-    15-dakikalık aralıkları CET saatine göre gruplar ve ortalar."""
+    """EQ'dan saatlik ortalama fiyatlar {cet_saat: fiyat}."""
+    curve = _EQ_FIYAT_CURVES.get(bzn)
+    if not curve:
+        return {}
     try:
-        r = requests.get(f"{EC_URL}?bzn={bzn}&start={tarih}&end={tarih}",
-                         verify=False, timeout=10)
-        d = r.json()
-        prices = d.get("price", [])
-        unix   = d.get("unix_seconds", [])
-        if not prices or not unix:
+        from energyquantified import EnergyQuantified
+        eq  = EnergyQuantified(api_key=_EQ_API_KEY)
+        end = (datetime.strptime(tarih, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        df  = eq.timeseries.load(curve=curve, begin=tarih, end=end).to_pandas_dataframe()
+        if df.empty:
             return {}
+        series  = df.iloc[:, 0].dropna()
         buckets = defaultdict(list)
-        for ts, p in zip(unix, prices):
-            if p is not None:
-                saat = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(CET).hour
-                buckets[saat].append(p)
+        for ts, val in series.items():
+            saat = ts.astimezone(CET).hour
+            buckets[saat].append(float(val))
         return {h: round(sum(v) / len(v), 2) for h, v in buckets.items()}
     except Exception:
         return {}
